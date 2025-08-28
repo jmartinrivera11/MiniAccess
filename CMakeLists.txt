@@ -36,6 +36,8 @@ if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
         gui/querybuilderdialog.h gui/querybuilderdialog.cpp
         gui/relationdesignerdialog.h gui/relationdesignerdialog.cpp
         gui/booldelegate.h gui/booldelegate.cpp
+        gui/theme.h gui/theme.cpp
+        resources.qrc
 
     )
 # Define target properties for Android with Qt 6 as:

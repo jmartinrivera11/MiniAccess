@@ -8,6 +8,9 @@
 #include <QLabel>
 #include <QInputDialog>
 #include <QHeaderView>
+#include <QKeySequence>
+#include <QWheelEvent>
+#include <QApplication>
 
 #include "TableModel.h"
 #include "TableDesignerDialog.h"
@@ -33,11 +36,13 @@ void MainWindow::setupUi() {
     view_->horizontalHeader()->setStretchLastSection(true);
     setCentralWidget(view_);
 
-    auto* fileMenu = menuBar()->addMenu("&File");
-    auto* toolsMenu = menuBar()->addMenu("&Tools");
-    auto* viewMenu = menuBar()->addMenu("&View");
+    view_->installEventFilter(this);
 
-    actNew_ = fileMenu->addAction("New Table...");
+    auto* fileMenu  = menuBar()->addMenu("&File");
+    auto* toolsMenu = menuBar()->addMenu("&Tools");
+    auto* viewMenu  = menuBar()->addMenu("&View");
+
+    actNew_  = fileMenu->addAction("New Table...");
     actOpen_ = fileMenu->addAction("Open Table...");
     fileMenu->addSeparator();
     auto* actQuit = fileMenu->addAction("Quit");
@@ -45,12 +50,21 @@ void MainWindow::setupUi() {
     actCreateIdxI_ = toolsMenu->addAction("Create Int32 Index...");
     actCreateIdxS_ = toolsMenu->addAction("Create String Index...");
     toolsMenu->addSeparator();
-    actQuery_ = toolsMenu->addAction("Query Builder...");
+    actQuery_    = toolsMenu->addAction("Query Builder...");
     actRelation_ = toolsMenu->addAction("Relation Designer...");
 
-    actInsert_ = viewMenu->addAction("Insert Row");
-    actDelete_ = viewMenu->addAction("Delete Selected Rows");
+    actInsert_  = viewMenu->addAction("Insert Row");
+    actDelete_  = viewMenu->addAction("Delete Selected Rows");
     actRefresh_ = viewMenu->addAction("Refresh");
+    viewMenu->addSeparator();
+
+    actZoomIn_    = viewMenu->addAction("Zoom +");
+    actZoomOut_   = viewMenu->addAction("Zoom -");
+    actZoomReset_ = viewMenu->addAction("Zoom 100%");
+
+    actZoomIn_->setShortcuts({QKeySequence::ZoomIn, QKeySequence("Ctrl++"), QKeySequence("Ctrl+=")});
+    actZoomOut_->setShortcuts({QKeySequence::ZoomOut, QKeySequence("Ctrl+-")});
+    actZoomReset_->setShortcut(QKeySequence("Ctrl+0"));
 
     auto* tb = addToolBar("Main");
     tb->addAction(actNew_);
@@ -65,20 +79,30 @@ void MainWindow::setupUi() {
     tb->addSeparator();
     tb->addAction(actQuery_);
     tb->addAction(actRelation_);
+    tb->addSeparator();
+    tb->addAction(actZoomIn_);
+    tb->addAction(actZoomOut_);
+    tb->addAction(actZoomReset_);
 
     statusLabel_ = new QLabel("Ready", this);
     statusBar()->addPermanentWidget(statusLabel_);
 
-    connect(actNew_,      &QAction::triggered, this, &MainWindow::newTable);
-    connect(actOpen_,     &QAction::triggered, this, &MainWindow::openTable);
+    connect(actNew_,       &QAction::triggered, this, &MainWindow::newTable);
+    connect(actOpen_,      &QAction::triggered, this, &MainWindow::openTable);
     connect(actCreateIdxI_,&QAction::triggered, this, &MainWindow::createIntIndex);
     connect(actCreateIdxS_,&QAction::triggered, this, &MainWindow::createStrIndex);
-    connect(actInsert_,   &QAction::triggered, this, &MainWindow::insertRow);
-    connect(actDelete_,   &QAction::triggered, this, &MainWindow::deleteSelectedRows);
-    connect(actRefresh_,  &QAction::triggered, this, &MainWindow::refreshView);
-    connect(actQuery_,    &QAction::triggered, this, &MainWindow::openQueryBuilder);
-    connect(actRelation_, &QAction::triggered, this, &MainWindow::openRelationDesigner);
-    connect(actQuit,      &QAction::triggered, this, &QWidget::close);
+    connect(actInsert_,    &QAction::triggered, this, &MainWindow::insertRow);
+    connect(actDelete_,    &QAction::triggered, this, &MainWindow::deleteSelectedRows);
+    connect(actRefresh_,   &QAction::triggered, this, &MainWindow::refreshView);
+    connect(actQuery_,     &QAction::triggered, this, &MainWindow::openQueryBuilder);
+    connect(actRelation_,  &QAction::triggered, this, &MainWindow::openRelationDesigner);
+    connect(actQuit,       &QAction::triggered, this, &QWidget::close);
+
+    connect(actZoomIn_,  &QAction::triggered, this, [this]{ gridZoom_ = std::min(gridZoom_+1, 8); applyGridScale(); });
+    connect(actZoomOut_, &QAction::triggered, this, [this]{ gridZoom_ = std::max(gridZoom_-1, -4); applyGridScale(); });
+    connect(actZoomReset_,&QAction::triggered, this, [this]{ gridZoom_ = 0; applyGridScale(); });
+
+    applyGridScale();
 }
 
 QString MainWindow::chooseBasePathForNew() {
@@ -122,7 +146,7 @@ void MainWindow::openTable() {
     try {
         table_ = std::make_unique<Table>();
         table_->open(base.toStdString());
-
+        schema_ = table_->getSchema();
         basePath_ = base;
         bindTableToView();
         statusLabel_->setText("Opened table: " + basePath_);
@@ -137,6 +161,8 @@ void MainWindow::bindTableToView() {
     if (!table_) return;
     model_ = new TableModel(table_.get(), this);
     view_->setModel(model_);
+    view_->resizeColumnsToContents();
+
     const auto& s = table_->getSchema();
     for (int c=0; c<(int)s.fields.size(); ++c) {
         if (s.fields[c].type == ma::FieldType::Bool) {
@@ -144,7 +170,8 @@ void MainWindow::bindTableToView() {
             view_->setColumnWidth(c, 80);
         }
     }
-    view_->resizeColumnsToContents();
+
+    applyGridScale();
 }
 
 void MainWindow::createIntIndex() {
@@ -216,6 +243,7 @@ void MainWindow::refreshView() {
     if (!model_) return;
     model_->reload();
     view_->resizeColumnsToContents();
+    applyGridScale();
 }
 
 void MainWindow::openQueryBuilder() {
@@ -227,4 +255,35 @@ void MainWindow::openQueryBuilder() {
 void MainWindow::openRelationDesigner() {
     RelationDesignerDialog dlg(this);
     dlg.exec();
+}
+
+void MainWindow::applyGridScale() {
+    if (!view_) return;
+
+    if (baseGridPt_ < 0) {
+        int ps = view_->font().pointSize();
+        baseGridPt_ = (ps > 0 ? ps : 11);
+    }
+
+    int targetPt = std::max(8, baseGridPt_ + gridZoom_);
+    QFont f = view_->font();
+    f.setPointSize(targetPt);
+    view_->setFont(f);
+
+    int rowH = targetPt * 2 + 10;
+    view_->verticalHeader()->setDefaultSectionSize(rowH);
+    view_->resizeColumnsToContents();
+}
+
+bool MainWindow::eventFilter(QObject* obj, QEvent* ev) {
+    if (obj == view_) {
+        if (ev->type() == QEvent::Wheel && (QApplication::keyboardModifiers() & Qt::ControlModifier)) {
+            auto* we = static_cast<QWheelEvent*>(ev);
+            if (we->angleDelta().y() > 0) gridZoom_ = std::min(gridZoom_+1, 8);
+            else                          gridZoom_ = std::max(gridZoom_-1, -4);
+            applyGridScale();
+            return true;
+        }
+    }
+    return QMainWindow::eventFilter(obj, ev);
 }

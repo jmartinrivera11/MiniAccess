@@ -336,7 +336,8 @@
 		"C:/Qt/6.9.1/mingw_64/lib/cmake/Qt6/QtPublicWindowsHelpers.cmake",
 		"C:/Qt/Tools/CMake_64/share/cmake-3.30/Modules/CMakeFindDependencyMacro.cmake",
 		"C:/Qt/6.9.1/mingw_64/lib/cmake/Qt6/Qt6Dependencies.cmake",
-		"C:/Qt/Tools/CMake_64/share/cmake-3.30/Modules/GNUInstallDirs.cmake"
+		"C:/Qt/Tools/CMake_64/share/cmake-3.30/Modules/GNUInstallDirs.cmake",
+		"C:/Users/Jose Martin Rivera/OneDrive/Documents/MiniAccess/resources.qrc"
 	],
 	"CMAKE_SOURCE_DIR" : "C:/Users/Jose Martin Rivera/OneDrive/Documents/MiniAccess",
 	"CROSS_CONFIG" : false,
@@ -444,6 +445,12 @@
 			"C:/Users/Jose Martin Rivera/OneDrive/Documents/MiniAccess/gui/tablemodel.h",
 			"MU",
 			"DMHXEJ42XS/moc_tablemodel.cpp",
+			null
+		],
+		[
+			"C:/Users/Jose Martin Rivera/OneDrive/Documents/MiniAccess/gui/theme.h",
+			"MU",
+			"DMHXEJ42XS/moc_theme.cpp",
 			null
 		]
 	],
@@ -605,6 +612,11 @@
 		],
 		[
 			"C:/Users/Jose Martin Rivera/OneDrive/Documents/MiniAccess/gui/tablemodel.cpp",
+			"MU",
+			null
+		],
+		[
+			"C:/Users/Jose Martin Rivera/OneDrive/Documents/MiniAccess/gui/theme.cpp",
 			"MU",
 			null
 		]

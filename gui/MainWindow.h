@@ -30,6 +30,9 @@ private:
     QString chooseBasePathForNew();
     QString chooseExistingMeta();
 
+    void applyGridScale();
+    bool eventFilter(QObject* obj, QEvent* ev) override;
+
 private:
     std::unique_ptr<ma::Table> table_;
     ma::Schema schema_;
@@ -48,4 +51,11 @@ private:
     QAction* actRefresh_{nullptr};
     QAction* actQuery_{nullptr};
     QAction* actRelation_{nullptr};
+
+    QAction* actZoomIn_{nullptr};
+    QAction* actZoomOut_{nullptr};
+    QAction* actZoomReset_{nullptr};
+
+    int gridZoom_ = 0;
+    int baseGridPt_ = -1;
 };
