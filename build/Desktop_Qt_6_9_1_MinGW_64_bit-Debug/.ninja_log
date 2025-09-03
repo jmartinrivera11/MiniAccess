@@ -1,0 +1,121 @@
+# ninja log v6
+36	84	7786186010811474	CMakeFiles/clean.additional	baedbe210acaa455
+2802	5961	7786186040403326	CMakeFiles/MiniAccess.dir/core/Table.cpp.obj	e42fb4d1cb345c54
+2797	7580	7786186040363149	CMakeFiles/MiniAccess.dir/app/main.cpp.obj	14c6fca23b138db8
+57	2624	7786186037610484	MiniAccess_autogen/timestamp	ee1e403eec9c1b6d
+8298	14929	7786186095367174	CMakeFiles/MiniAccess.dir/gui/newtabledialog.cpp.obj	eaaaa8128db90d0b
+2806	4803	7786186040443483	CMakeFiles/MiniAccess.dir/core/indexstorage.cpp.obj	427636333b3f8785
+84	108	7786186011338774	clean	577b940aee94fbd7
+57	2624	7786186037610484	MiniAccess_autogen/mocs_compilation.cpp	ee1e403eec9c1b6d
+57	2624	7786186037610484	C:/Users/Jose Martin Rivera/OneDrive/Documents/MiniAccess/build/Desktop_Qt_6_9_1_MinGW_64_bit-Debug/MiniAccess_autogen/timestamp	ee1e403eec9c1b6d
+2785	5391	7786186040245244	CMakeFiles/MiniAccess.dir/core/Record.cpp.obj	40346e1bbae6bbc7
+57	2624	7786186037610484	C:/Users/Jose Martin Rivera/OneDrive/Documents/MiniAccess/build/Desktop_Qt_6_9_1_MinGW_64_bit-Debug/MiniAccess_autogen/mocs_compilation.cpp	ee1e403eec9c1b6d
+2776	4242	7786186040153176	CMakeFiles/MiniAccess.dir/core/AvailList.cpp.obj	6372ffab9efeaa7f
+4222	8818	7786186054605576	CMakeFiles/MiniAccess.dir/gui/booldelegate.cpp.obj	55c72ef29a100d46
+2780	4222	7786186040193163	CMakeFiles/MiniAccess.dir/core/Page.cpp.obj	1733c655e54abec3
+8819	11755	7786186100584991	CMakeFiles/MiniAccess.dir/MiniAccess_autogen/EWIEGA46WW/qrc_resources.cpp.obj	4ac3dd637eae41c9
+2770	10441	7786186040103076	CMakeFiles/MiniAccess.dir/MiniAccess_autogen/mocs_compilation.cpp.obj	7ffaa2c93b9d81b2
+2789	4202	7786186040285407	CMakeFiles/MiniAccess.dir/core/Schema.cpp.obj	60e2c82af7b57dce
+2793	4978	7786186040325584	CMakeFiles/MiniAccess.dir/core/Storage.cpp.obj	2d87527158326e9d
+5273	13686	7786186065129699	CMakeFiles/MiniAccess.dir/gui/delegates/CurrencyDelegate.cpp.obj	fd214cd239f68f18
+16841	19576	7786186180812388	MiniAccess.exe	cd03c6a1b7b258b6
+2625	2770	7786186039977684	MiniAccess_autogen/EWIEGA46WW/qrc_resources.cpp	45e53ca30e09278d
+4803	15631	7786186060427447	CMakeFiles/MiniAccess.dir/gui/objectsdock.cpp.obj	5c1055c0edae1dd
+2815	4890	7786186040544069	CMakeFiles/MiniAccess.dir/core/indexint32.cpp.obj	c84950f047478259
+2823	5013	7786186040624393	CMakeFiles/MiniAccess.dir/core/indexstring.cpp.obj	609d6b9cf8263a43
+2810	4848	7786186040488846	CMakeFiles/MiniAccess.dir/core/bplustreeint32.cpp.obj	a7ec49426689b09c
+2819	5273	7786186040584242	CMakeFiles/MiniAccess.dir/core/bplustreestring.cpp.obj	7e243daa3bbdb8c7
+2827	12501	7786186040664530	CMakeFiles/MiniAccess.dir/gui/MainWindow.cpp.obj	a9e79820d6fe98c3
+4848	15013	7786186060878556	CMakeFiles/MiniAccess.dir/gui/datasheetpage.cpp.obj	ac8055b0ebffdd95
+4202	13806	7786186054422566	CMakeFiles/MiniAccess.dir/gui/tablemodel.cpp.obj	433a555cd52b8b71
+4242	8298	7786186054809582	CMakeFiles/MiniAccess.dir/gui/theme.cpp.obj	a14213eb287effda
+8	1046	7785747323367929	build.ninja	f4587fe9858b2d3b
+2625	2770	7786186039977684	C:/Users/Jose Martin Rivera/OneDrive/Documents/MiniAccess/build/Desktop_Qt_6_9_1_MinGW_64_bit-Debug/MiniAccess_autogen/EWIEGA46WW/qrc_resources.cpp	45e53ca30e09278d
+7580	15876	7786186088201927	CMakeFiles/MiniAccess.dir/gui/querymodel.cpp.obj	1531c8b34f9d43d1
+4978	16841	7786186062176359	CMakeFiles/MiniAccess.dir/gui/querybuilderpage.cpp.obj	e14e383fa70b418a
+5013	13454	7786186062533634	CMakeFiles/MiniAccess.dir/gui/relationdesignerpage.cpp.obj	a45fe4f8a66f5f1c
+5391	14534	7786186066304645	CMakeFiles/MiniAccess.dir/gui/delegates/datetimedelegate.cpp.obj	ae6e819f58cc5c66
+4891	15952	7786186061304498	CMakeFiles/MiniAccess.dir/gui/designpage.cpp.obj	c6887fe78e63d880
+5962	13194	7786186072014162	CMakeFiles/MiniAccess.dir/gui/formatdelegate.cpp.obj	c4eabda59a2228b6
+50	105	7786186259766409	CMakeFiles/clean.additional	baedbe210acaa455
+106	139	7786186260392226	clean	577b940aee94fbd7
+36	2056	7786186300270873	MiniAccess_autogen/timestamp	ee1e403eec9c1b6d
+36	2056	7786186300270873	MiniAccess_autogen/mocs_compilation.cpp	ee1e403eec9c1b6d
+36	2056	7786186300270873	C:/Users/Jose Martin Rivera/OneDrive/Documents/MiniAccess/build/Desktop_Qt_6_9_1_MinGW_64_bit-Debug/MiniAccess_autogen/timestamp	ee1e403eec9c1b6d
+36	2056	7786186300270873	C:/Users/Jose Martin Rivera/OneDrive/Documents/MiniAccess/build/Desktop_Qt_6_9_1_MinGW_64_bit-Debug/MiniAccess_autogen/mocs_compilation.cpp	ee1e403eec9c1b6d
+2058	2178	7786186302363860	MiniAccess_autogen/EWIEGA46WW/qrc_resources.cpp	45e53ca30e09278d
+2058	2178	7786186302363860	C:/Users/Jose Martin Rivera/OneDrive/Documents/MiniAccess/build/Desktop_Qt_6_9_1_MinGW_64_bit-Debug/MiniAccess_autogen/EWIEGA46WW/qrc_resources.cpp	45e53ca30e09278d
+2202	2900	7786186302764412	CMakeFiles/MiniAccess.dir/core/Schema.cpp.obj	60e2c82af7b57dce
+2188	2973	7786186302607277	CMakeFiles/MiniAccess.dir/core/Page.cpp.obj	1733c655e54abec3
+2182	3132	7786186302569216	CMakeFiles/MiniAccess.dir/core/AvailList.cpp.obj	6372ffab9efeaa7f
+2218	3436	7786186302909670	CMakeFiles/MiniAccess.dir/core/indexstorage.cpp.obj	427636333b3f8785
+2207	3651	7786186302806412	CMakeFiles/MiniAccess.dir/core/Storage.cpp.obj	2d87527158326e9d
+2227	3681	7786186303014253	CMakeFiles/MiniAccess.dir/core/indexint32.cpp.obj	c84950f047478259
+2222	3754	7786186302959033	CMakeFiles/MiniAccess.dir/core/bplustreeint32.cpp.obj	a7ec49426689b09c
+2235	3773	7786186303094582	CMakeFiles/MiniAccess.dir/core/indexstring.cpp.obj	609d6b9cf8263a43
+2230	3814	7786186303034342	CMakeFiles/MiniAccess.dir/core/bplustreestring.cpp.obj	7e243daa3bbdb8c7
+2196	4195	7786186302703499	CMakeFiles/MiniAccess.dir/core/Record.cpp.obj	40346e1bbae6bbc7
+2214	4663	7786186302889605	CMakeFiles/MiniAccess.dir/core/Table.cpp.obj	e42fb4d1cb345c54
+2211	7115	7786186302849448	CMakeFiles/MiniAccess.dir/app/main.cpp.obj	14c6fca23b138db8
+3133	7155	7786186312075012	CMakeFiles/MiniAccess.dir/gui/theme.cpp.obj	a14213eb287effda
+3814	7856	7786186318886235	CMakeFiles/MiniAccess.dir/gui/delegates/CurrencyDelegate.cpp.obj	fd214cd239f68f18
+2973	7863	7786186310475962	CMakeFiles/MiniAccess.dir/gui/booldelegate.cpp.obj	55c72ef29a100d46
+3774	7987	7786186318485516	CMakeFiles/MiniAccess.dir/gui/relationdesignerpage.cpp.obj	a45fe4f8a66f5f1c
+2178	8124	7786186302529152	CMakeFiles/MiniAccess.dir/MiniAccess_autogen/mocs_compilation.cpp.obj	7ffaa2c93b9d81b2
+4195	8665	7786186322699750	CMakeFiles/MiniAccess.dir/gui/delegates/datetimedelegate.cpp.obj	ae6e819f58cc5c66
+3651	8824	7786186317263254	CMakeFiles/MiniAccess.dir/gui/datasheetpage.cpp.obj	ac8055b0ebffdd95
+7856	9220	7786186359309488	CMakeFiles/MiniAccess.dir/MiniAccess_autogen/EWIEGA46WW/qrc_resources.cpp.obj	4ac3dd637eae41c9
+4664	9257	7786186327384698	CMakeFiles/MiniAccess.dir/gui/formatdelegate.cpp.obj	c4eabda59a2228b6
+2900	9290	7786186309739987	CMakeFiles/MiniAccess.dir/gui/tablemodel.cpp.obj	433a555cd52b8b71
+2239	9364	7786186303122954	CMakeFiles/MiniAccess.dir/gui/MainWindow.cpp.obj	a9e79820d6fe98c3
+3437	9381	7786186315111264	CMakeFiles/MiniAccess.dir/gui/objectsdock.cpp.obj	5c1055c0edae1dd
+3681	9669	7786186317555986	CMakeFiles/MiniAccess.dir/gui/designpage.cpp.obj	c6887fe78e63d880
+3754	9951	7786186318288914	CMakeFiles/MiniAccess.dir/gui/querybuilderpage.cpp.obj	e14e383fa70b418a
+7155	10169	7786186352299817	CMakeFiles/MiniAccess.dir/gui/newtabledialog.cpp.obj	eaaaa8128db90d0b
+7115	10775	7786186351895552	CMakeFiles/MiniAccess.dir/gui/querymodel.cpp.obj	1531c8b34f9d43d1
+10775	12956	7786186388498350	MiniAccess.exe	cd03c6a1b7b258b6
+55	85	7786207985228363	CMakeFiles/clean.additional	baedbe210acaa455
+86	105	7786207985527129	clean	577b940aee94fbd7
+34	73	7786208002670033	CMakeFiles/clean.additional	baedbe210acaa455
+73	85	7786208003150721	clean	577b940aee94fbd7
+35	2016	7786208023422828	MiniAccess_autogen/timestamp	ee1e403eec9c1b6d
+35	2016	7786208023422828	MiniAccess_autogen/mocs_compilation.cpp	ee1e403eec9c1b6d
+35	2016	7786208023422828	C:/Users/Jose Martin Rivera/OneDrive/Documents/MiniAccess/build/Desktop_Qt_6_9_1_MinGW_64_bit-Debug/MiniAccess_autogen/timestamp	ee1e403eec9c1b6d
+35	2016	7786208023422828	C:/Users/Jose Martin Rivera/OneDrive/Documents/MiniAccess/build/Desktop_Qt_6_9_1_MinGW_64_bit-Debug/MiniAccess_autogen/mocs_compilation.cpp	ee1e403eec9c1b6d
+2017	2121	7786208025123973	MiniAccess_autogen/EWIEGA46WW/qrc_resources.cpp	45e53ca30e09278d
+2017	2121	7786208025123973	C:/Users/Jose Martin Rivera/OneDrive/Documents/MiniAccess/build/Desktop_Qt_6_9_1_MinGW_64_bit-Debug/MiniAccess_autogen/EWIEGA46WW/qrc_resources.cpp	45e53ca30e09278d
+2128	2855	7786208025354725	CMakeFiles/MiniAccess.dir/core/Page.cpp.obj	1733c655e54abec3
+2134	2863	7786208025417511	CMakeFiles/MiniAccess.dir/core/Schema.cpp.obj	60e2c82af7b57dce
+2124	2970	7786208025311208	CMakeFiles/MiniAccess.dir/core/AvailList.cpp.obj	6372ffab9efeaa7f
+2149	3392	7786208025562970	CMakeFiles/MiniAccess.dir/core/indexstorage.cpp.obj	427636333b3f8785
+2157	3594	7786208025636533	CMakeFiles/MiniAccess.dir/core/indexint32.cpp.obj	c84950f047478259
+2164	3677	7786208025707185	CMakeFiles/MiniAccess.dir/core/indexstring.cpp.obj	609d6b9cf8263a43
+2153	3776	7786208025608274	CMakeFiles/MiniAccess.dir/core/bplustreeint32.cpp.obj	a7ec49426689b09c
+2131	3880	7786208025376469	CMakeFiles/MiniAccess.dir/core/Record.cpp.obj	40346e1bbae6bbc7
+2138	3886	7786208025437680	CMakeFiles/MiniAccess.dir/core/Storage.cpp.obj	2d87527158326e9d
+2160	4104	7786208025676767	CMakeFiles/MiniAccess.dir/core/bplustreestring.cpp.obj	7e243daa3bbdb8c7
+2146	5133	7786208025520486	CMakeFiles/MiniAccess.dir/core/Table.cpp.obj	e42fb4d1cb345c54
+2141	6545	7786208025473945	CMakeFiles/MiniAccess.dir/app/main.cpp.obj	14c6fca23b138db8
+2970	6762	7786208033769149	CMakeFiles/MiniAccess.dir/gui/theme.cpp.obj	a14213eb287effda
+2863	7644	7786208032713088	CMakeFiles/MiniAccess.dir/gui/booldelegate.cpp.obj	55c72ef29a100d46
+2121	8177	7786208025282465	CMakeFiles/MiniAccess.dir/MiniAccess_autogen/mocs_compilation.cpp.obj	7ffaa2c93b9d81b2
+3880	8252	7786208042868666	CMakeFiles/MiniAccess.dir/gui/relationdesignerpage.cpp.obj	a45fe4f8a66f5f1c
+3886	8990	7786208042933804	CMakeFiles/MiniAccess.dir/gui/delegates/CurrencyDelegate.cpp.obj	fd214cd239f68f18
+2169	9087	7786208025761037	CMakeFiles/MiniAccess.dir/gui/MainWindow.cpp.obj	a9e79820d6fe98c3
+4104	9131	7786208045111496	CMakeFiles/MiniAccess.dir/gui/delegates/datetimedelegate.cpp.obj	ae6e819f58cc5c66
+2855	9281	7786208032630610	CMakeFiles/MiniAccess.dir/gui/tablemodel.cpp.obj	433a555cd52b8b71
+7644	9318	7786208080518758	CMakeFiles/MiniAccess.dir/MiniAccess_autogen/EWIEGA46WW/qrc_resources.cpp.obj	4ac3dd637eae41c9
+3594	9599	7786208040018066	CMakeFiles/MiniAccess.dir/gui/datasheetpage.cpp.obj	ac8055b0ebffdd95
+5133	9691	7786208055413077	CMakeFiles/MiniAccess.dir/gui/formatdelegate.cpp.obj	c4eabda59a2228b6
+3677	10204	7786208040836673	CMakeFiles/MiniAccess.dir/gui/designpage.cpp.obj	c6887fe78e63d880
+3393	10238	7786208037992320	CMakeFiles/MiniAccess.dir/gui/objectsdock.cpp.obj	5c1055c0edae1dd
+6762	10645	7786208071703589	CMakeFiles/MiniAccess.dir/gui/newtabledialog.cpp.obj	eaaaa8128db90d0b
+3776	10839	7786208041817823	CMakeFiles/MiniAccess.dir/gui/querybuilderpage.cpp.obj	e14e383fa70b418a
+6545	11152	7786208069526462	CMakeFiles/MiniAccess.dir/gui/querymodel.cpp.obj	1531c8b34f9d43d1
+11152	13697	7786208115594627	MiniAccess.exe	cd03c6a1b7b258b6
+11	306	7786208517441461	MiniAccess_autogen/timestamp	ee1e403eec9c1b6d
+11	306	7786208517441461	MiniAccess_autogen/mocs_compilation.cpp	ee1e403eec9c1b6d
+11	306	7786208517441461	C:/Users/Jose Martin Rivera/OneDrive/Documents/MiniAccess/build/Desktop_Qt_6_9_1_MinGW_64_bit-Debug/MiniAccess_autogen/timestamp	ee1e403eec9c1b6d
+11	306	7786208517441461	C:/Users/Jose Martin Rivera/OneDrive/Documents/MiniAccess/build/Desktop_Qt_6_9_1_MinGW_64_bit-Debug/MiniAccess_autogen/mocs_compilation.cpp	ee1e403eec9c1b6d
+307	3705	7786208520419492	CMakeFiles/MiniAccess.dir/gui/MainWindow.cpp.obj	a9e79820d6fe98c3
+3705	6171	7786208554384755	MiniAccess.exe	cd03c6a1b7b258b6

@@ -1,0 +1,23 @@
+<RCC>
+    <qresource prefix="/fonts">
+        <file>fonts/Roboto-Medium.ttf</file>
+        <file>fonts/Roboto-Regular.ttf</file>
+        <file>fonts/JetBrainsMono-Light.ttf</file>
+        <file>fonts/JetBrainsMono-Medium.ttf</file>
+    </qresource>
+    <qresource prefix="/icons">
+        <file>icons/app.svg</file>
+        <file>icons/delete.svg</file>
+        <file>icons/index-int.svg</file>
+        <file>icons/index-str.svg</file>
+        <file>icons/insert.svg</file>
+        <file>icons/new.svg</file>
+        <file>icons/open.svg</file>
+        <file>icons/query.svg</file>
+        <file>icons/refresh.svg</file>
+        <file>icons/relation.svg</file>
+        <file>icons/zoom-in.svg</file>
+        <file>icons/zoom-out.svg</file>
+        <file>icons/zoom-reset.svg</file>
+    </qresource>
+</RCC>
