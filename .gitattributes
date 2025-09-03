@@ -1,2 +1,5 @@
-# Auto detect text files and perform LF normalization
 * text=auto
+
+# Trata scripts como texto explícito
+*.sh text eol=lf
+*.ps1 text eol=crlf
