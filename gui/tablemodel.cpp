@@ -164,17 +164,97 @@ Qt::ItemFlags TableModel::flags(const QModelIndex& index) const {
     return Qt::ItemIsSelectable | Qt::ItemIsEnabled | Qt::ItemIsEditable;
 }
 
+static bool coerceValueForField(const ma::Field& f, const QVariant& in, ma::Value& out) {
+    if ((in.typeId() == QMetaType::QString && in.toString().trimmed().isEmpty()) || !in.isValid()) {
+        return true;
+    }
+
+    const QString str = in.toString().trimmed();
+
+    switch (f.type) {
+    case ma::FieldType::Int32: {
+        bool ok=false;
+        qlonglong n = str.isEmpty() ? in.toLongLong(&ok) : str.toLongLong(&ok, 10);
+        if (!ok || n < INT_MIN || n > INT_MAX) return false;
+        out = static_cast<int32_t>(n);
+        return true;
+    }
+    case ma::FieldType::Double: {
+        bool ok=false;
+        QLocale loc;
+        double d;
+        if (str.isEmpty()) d = in.toDouble(&ok);
+        else { d = loc.toDouble(str, &ok); if (!ok) d = str.toDouble(&ok); }
+        if (!ok) return false;
+        out = d;
+        return true;
+    }
+    case ma::FieldType::Bool: {
+        const QString v = str.toLower();
+        if (v=="true" || v=="yes" || v=="si" || v=="on" || v=="1")  { out = true;  return true; }
+        if (v=="false"|| v=="no"  || v=="off"|| v=="0")              { out = false; return true; }
+        if (in.canConvert<bool>()) { out = in.toBool(); return true; }
+        return false;
+    }
+    case ma::FieldType::String: {
+        if (ma::isDateTimeFmt(f.size)) {
+            static const char* const formats[] = {
+                "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd HH:mm", "yyyy-MM-dd",
+                "dd/MM/yyyy HH:mm:ss","dd/MM/yyyy HH:mm", "dd/MM/yyyy",
+                "MM/dd/yyyy HH:mm:ss","MM/dd/yyyy HH:mm", "MM/dd/yyyy",
+                "HH:mm:ss","HH:mm"
+            };
+            QDateTime dt;
+            for (auto fmt : formats) {
+                dt = QDateTime::fromString(str, fmt);
+                if (dt.isValid()) break;
+            }
+            if (!dt.isValid()) dt = QDateTime::fromString(str, Qt::ISODate);
+            if (!dt.isValid()) return false;
+            out = dt.toString(Qt::ISODate).toStdString();
+            return true;
+        } else {
+            out = str.toStdString();
+            return true;
+        }
+    }
+    case ma::FieldType::CharN: {
+        if (f.size > 0 && str.size() > (int)f.size) return false;
+        out = str.toStdString();
+        return true;
+    }
+    default:
+        return false;
+    }
+}
+
 bool TableModel::setData(const QModelIndex& idx, const QVariant& v, int role) {
     if (role != Qt::EditRole || !idx.isValid()) return false;
+    if (!table_) return false;
 
-    Record rec = cache_[idx.row()];
-    rec.values[idx.column()] = fromVariant(idx.column(), v);
+    const int row = idx.row();
+    const int col = idx.column();
+    const auto& f = schema_.fields[col];
 
-    auto maybeNewRid = table_->update(rids_[idx.row()], rec);
+    bool isNull = false;
+    ma::Value coerced;
+    if ((v.typeId() == QMetaType::QString && v.toString().trimmed().isEmpty()) || !v.isValid()) {
+        isNull = true;
+    } else {
+        if (!coerceValueForField(f, v, coerced)) {
+            return false;
+        }
+    }
+
+    ma::Record rec = cache_[row];
+    if (isNull) rec.values[col].reset();
+    else        rec.values[col] = coerced;
+
+    auto maybeNewRid = table_->update(rids_[row], rec);
     if (!maybeNewRid) return false;
 
-    rids_[idx.row()] = *maybeNewRid;
-    cache_[idx.row()] = rec;
+    rids_[row]  = *maybeNewRid;
+    cache_[row] = rec;
 
     emit dataChanged(idx, idx, {Qt::DisplayRole, Qt::EditRole});
     return true;
