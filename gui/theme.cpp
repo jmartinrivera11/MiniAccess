@@ -5,24 +5,33 @@
 
 namespace gui {
 
-static const char* BG_APP    = "#ededf0"; // fondo general ligeramente más oscuro
-static const char* BG_SURF   = "#ffffff"; // superficies (hoja/datasheet)
+// === Palette: Evergreen (verde limpio con acentos esmeralda) ===
+static const char* BG_APP    = "#EEF5F2"; // fondo general con tinte menta muy suave
+static const char* BG_SURF   = "#FFFFFF"; // superficies (hoja/datasheet) se mantienen blancas
 
-static const char* BG_RIB_L  = "#c0c0c5"; // ribbon (arriba)
-static const char* BG_RIB_D  = "#b5b5ba"; // ribbon (abajo)
-static const char* BG_NAV    = "#aeafb7"; // panel izquierdo (cuerpo)
-static const char* BG_NAV_L  = "#b8b8bf"; // panel izquierdo (título)
-static const char* BORD      = "#9a9ca6"; // bordes / gridlines
+// Ribbon (barra superior) en verde medio-oscuro, pensado para iconos/texto claros
+static const char* BG_RIB_L  = "#2D6A57"; // parte superior (ligeramente más clara)
+static const char* BG_RIB_D  = "#245646"; // parte inferior (ligeramente más oscura)
 
-static const char* BG_HOV    = "#dcdde2"; // hover un paso más marcado
-static const char* BG_PUSH   = "#d2d3da"; // pressed
+// Panel izquierdo (navegación) en verde más profundo para separar bien del contenido
+static const char* BG_NAV    = "#1F463C"; // cuerpo del dock (oscuro)
+static const char* BG_NAV_L  = "#275A4D"; // cabecera/título del dock (un paso más claro)
 
-static const char* TXT       = "#1f1f1f"; // texto principal
-static const char* TXT_DIM   = "#505055"; // texto tenue un poco más oscuro
-static const char* TXT_INV   = "#ffffff"; // texto invertido
+// Bordes / líneas de tabla con un verde grisáceo suave
+static const char* BORD      = "#B5D8CA";
 
-static const char* ACCENT    = "#c83a3a"; // rojo Access
-static const char* ACCENT_D  = "#9e2f2f"; // rojo más oscuro
+// Estados de hover/press en superficies claras (datasheet, listas, etc.)
+static const char* BG_HOV    = "#E2F1EA"; // hover: apenas más verdoso
+static const char* BG_PUSH   = "#D6E8E0"; // pressed: un paso más marcado
+
+// Tipografía
+static const char* TXT       = "#12221B"; // texto principal (casi negro con matiz verde)
+static const char* TXT_DIM   = "#4A6559"; // texto tenue/descriptivo
+static const char* TXT_INV   = "#FFFFFF"; // texto invertido (para ribbon/nav)
+
+// Acento primario en esmeralda (botones primarios, selección activa, etc.)
+static const char* ACCENT    = "#0F8F66"; // esmeralda elegante
+static const char* ACCENT_D  = "#0B6B4D"; // acento más oscuro (hover/active)
 
 static QString loadFallbackFont() {
     const QStringList candidates = {
