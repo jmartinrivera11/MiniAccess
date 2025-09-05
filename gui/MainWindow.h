@@ -44,6 +44,7 @@ private:
     void setProjectPathAndReload(const QString& dir);
     bool firstShow_ = true;
     QPointer<QWidget> queryBuilderTab_;
+    QPointer<QWidget> relationDesignerTab_;
 
 private:
     QTabWidget* tabs_{nullptr};

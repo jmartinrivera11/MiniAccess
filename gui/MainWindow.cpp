@@ -59,6 +59,7 @@ void MainWindow::setupUi() {
         eraseByWidget(openDatasheets_);
         eraseByWidget(openDesigns_);
         if (queryBuilderTab_ == w) queryBuilderTab_.clear();
+        if (relationDesignerTab_ == w) relationDesignerTab_.clear();
 
         tabs_->removeTab(idx);
         if (w) w->deleteLater();
@@ -115,6 +116,9 @@ void MainWindow::setupUi() {
     QAction* actQuery = new QAction(QIcon(":/icons/icons/query.svg"), "Query Builder", this);
     ribbon->addAction(actQuery);
 
+    QAction* actRelations = new QAction(QIcon(":/icons/icons/relation.svg"), "Relation Designer", this);
+    ribbon->addAction(actRelations);
+
     for (auto* btn : ribbon->findChildren<QToolButton*>()) {
         btn->setAutoRaise(false);
     }
@@ -133,6 +137,7 @@ void MainWindow::setupUi() {
     connect(actZoomOut,      &QAction::triggered, this, &MainWindow::zoomOut);
 
     connect(actQuery,        &QAction::triggered, this, &MainWindow::openQueryBuilder);
+    connect(actRelations, &QAction::triggered, this, &MainWindow::openRelationDesigner);
     connect(actInsert,       &QAction::triggered, this, &MainWindow::insertRecord);
     connect(actDelete,       &QAction::triggered, this, &MainWindow::deleteRecord);
     connect(actRefresh,      &QAction::triggered, this, &MainWindow::refreshView);
@@ -209,9 +214,19 @@ void MainWindow::openQueryBuilder() {
 }
 
 void MainWindow::openRelationDesigner() {
-    auto* page = new RelationDesignerPage(this);
+    if (currentProjectPath_.isEmpty()) {
+        QMessageBox::information(this, "Relations", "Open or create a Project first.");
+        return;
+    }
+    if (relationDesignerTab_) {
+        int i = tabs_->indexOf(relationDesignerTab_);
+        if (i >= 0) { tabs_->setCurrentIndex(i); return; }
+        relationDesignerTab_.clear();
+    }
+    auto* page = new RelationDesignerPage(currentProjectPath_, this);
     int idx = tabs_->addTab(page, QIcon(":/icons/icons/relation.svg"), "Relations");
     tabs_->setCurrentIndex(idx);
+    relationDesignerTab_ = page;
 }
 
 void MainWindow::openFromDockDesign(const QString& basePath) {
@@ -335,6 +350,7 @@ void MainWindow::setProjectPathAndReload(const QString& dir) {
     openDatasheets_.clear();
     openDesigns_.clear();
     queryBuilderTab_.clear();
+    relationDesignerTab_.clear();
 
     refreshDock();
 
