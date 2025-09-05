@@ -7,6 +7,8 @@
 #include <optional>
 #include <cstdint>
 #include "../core/DisplayFmt.h"
+#include <climits>
+#include <algorithm>
 
 using namespace ma;
 
@@ -15,6 +17,10 @@ static inline QString currencySymbol(uint16_t sz) {
     if (sz == FMT_CUR_USD) return "$";
     if (sz == FMT_CUR_EUR) return "€";
     return QLocale().currencySymbol(QLocale::CurrencySymbol);
+}
+
+static QString formatCurrencyLocal(double v) {
+    return QLocale().toString(v, 'f', 2);
 }
 
 static inline QString boolLabel(bool v, uint16_t fmt) {
@@ -128,40 +134,104 @@ Value TableModel::fromVariant(int col, const QVariant& qv) const {
 
 QVariant TableModel::data(const QModelIndex& idx, int role) const {
     if (!idx.isValid()) return {};
-    const auto& f = schema_.fields[idx.column()];
-    const auto& ov = cache_[idx.row()].values[idx.column()];
+    const int row = idx.row();
+    const int col = idx.column();
+    const auto& f = schema_.fields[col];
+    const auto& opt = cache_[row].values[col];
 
-    if (role == Qt::EditRole) {
-        return toVariant(ov);
+    if (f.type == ma::FieldType::Bool) {
+        if (role == Qt::CheckStateRole) {
+            if (!opt.has_value()) return Qt::Unchecked;
+            const ma::Value& v = opt.value();
+            bool b = false;
+            if (std::holds_alternative<bool>(v)) b = std::get<bool>(v);
+            else if (std::holds_alternative<int>(v)) b = (std::get<int>(v) != 0);
+            return b ? Qt::Checked : Qt::Unchecked;
+        }
+        if (role == Qt::DisplayRole || role == Qt::EditRole) return {};
+        return {};
     }
 
     if (role == Qt::DisplayRole) {
-        if (f.type == FieldType::Double && ov.has_value()) {
+        if (!opt.has_value()) return {};
+
+        const ma::Value& v = opt.value();
+
+        if (f.type == ma::FieldType::Double && ma::isCurrencyFmt(f.size)) {
             double d = 0.0;
-            if (std::holds_alternative<double>(*ov)) d = std::get<double>(*ov);
-            if (isCurrencyFmt(f.size)) {
-                return QLocale().toCurrencyString(d, currencySymbol(f.size));
-            } else if (isDoublePrecision(f.size)) {
-                return QLocale().toString(d, 'f', f.size);
-            }
+            if (std::holds_alternative<double>(v)) d = std::get<double>(v);
+            else if (std::holds_alternative<int>(v)) d = static_cast<double>(std::get<int>(v));
+            else if (std::holds_alternative<long long>(v)) d = static_cast<double>(std::get<long long>(v));
+
+            // símbolo según formato
+            QString sym;
+            if (f.size == ma::FMT_CUR_LPS)      sym = "L ";
+            else if (f.size == ma::FMT_CUR_USD) sym = "$ ";
+            else if (f.size == ma::FMT_CUR_EUR) sym = "€ ";
+            else                                 sym = QLocale().currencySymbol(QLocale::CurrencySymbol) + " ";
+
+            return sym + QLocale().toString(d, 'f', 2);
         }
-        if (f.type == FieldType::Bool && ov.has_value()) {
-            if (std::holds_alternative<bool>(*ov)) {
-                return boolLabel(std::get<bool>(*ov), f.size);
-            }
+
+        if (f.type == ma::FieldType::String && ma::isDateTimeFmt(f.size)) {
+            if (std::holds_alternative<std::string>(v))
+                return QString::fromStdString(std::get<std::string>(v));
+            return {};
         }
-        if (f.type == FieldType::String && isDateTimeFmt(f.size) && ov.has_value()) {
-            if (std::holds_alternative<std::string>(*ov))
-                return QString::fromStdString(std::get<std::string>(*ov));
+
+        if (f.type == ma::FieldType::Double) {
+            double d = 0.0;
+            if (std::holds_alternative<double>(v)) d = std::get<double>(v);
+            else if (std::holds_alternative<int>(v)) d = static_cast<double>(std::get<int>(v));
+            else if (std::holds_alternative<long long>(v)) d = static_cast<double>(std::get<long long>(v));
+            int dec = std::clamp<int>(static_cast<int>(f.size), 0, 19);
+            return QLocale().toString(d, 'f', dec);
         }
-        return toVariant(ov);
+
+        if (std::holds_alternative<int>(v))         return std::get<int>(v);
+        if (std::holds_alternative<long long>(v))   return static_cast<qlonglong>(std::get<long long>(v));
+        if (std::holds_alternative<std::string>(v)) return QString::fromStdString(std::get<std::string>(v));
+        return {};
     }
+
+    if (role == Qt::EditRole) {
+        if (!opt.has_value()) return {};
+        const ma::Value& v = opt.value();
+
+        if (f.type == ma::FieldType::Double) {
+            if (std::holds_alternative<double>(v))      return std::get<double>(v);
+            if (std::holds_alternative<int>(v))         return static_cast<double>(std::get<int>(v));
+            if (std::holds_alternative<long long>(v))   return static_cast<double>(std::get<long long>(v));
+        }
+        if (f.type == ma::FieldType::String) {
+            if (std::holds_alternative<std::string>(v)) return QString::fromStdString(std::get<std::string>(v));
+        }
+        if (f.type == ma::FieldType::Int32) {
+            if (std::holds_alternative<int>(v))         return std::get<int>(v);
+        }
+        if (f.type == ma::FieldType::CharN) {
+            if (std::holds_alternative<std::string>(v)) return QString::fromStdString(std::get<std::string>(v));
+        }
+        return {};
+    }
+
     return {};
 }
 
-Qt::ItemFlags TableModel::flags(const QModelIndex& index) const {
-    if (!index.isValid()) return Qt::NoItemFlags;
-    return Qt::ItemIsSelectable | Qt::ItemIsEnabled | Qt::ItemIsEditable;
+Qt::ItemFlags TableModel::flags(const QModelIndex& idx) const {
+    Qt::ItemFlags fl = QAbstractTableModel::flags(idx);
+    if (!idx.isValid()) return fl;
+
+    const auto& f = schema_.fields[idx.column()];
+
+    if (f.type == ma::FieldType::Bool) {
+        fl |=  Qt::ItemIsUserCheckable | Qt::ItemIsEnabled | Qt::ItemIsSelectable;
+        fl &= ~Qt::ItemIsEditable;
+        return fl;
+    }
+
+    fl |= Qt::ItemIsEditable | Qt::ItemIsEnabled | Qt::ItemIsSelectable;
+    return fl;
 }
 
 static bool coerceValueForField(const ma::Field& f, const QVariant& in, ma::Value& out) {
@@ -229,12 +299,28 @@ static bool coerceValueForField(const ma::Field& f, const QVariant& in, ma::Valu
 }
 
 bool TableModel::setData(const QModelIndex& idx, const QVariant& v, int role) {
-    if (role != Qt::EditRole || !idx.isValid()) return false;
-    if (!table_) return false;
+    if (!idx.isValid() || !table_) return false;
 
     const int row = idx.row();
     const int col = idx.column();
     const auto& f = schema_.fields[col];
+
+    if (f.type == ma::FieldType::Bool && role == Qt::CheckStateRole) {
+        ma::Record rec = cache_[row];
+        const bool b = (v.toInt() == Qt::Checked);
+        rec.values[col] = b;
+
+        auto rid2 = table_->update(rids_[row], rec);
+        if (!rid2) return false;
+
+        rids_[row]  = *rid2;
+        cache_[row] = rec;
+
+        emit dataChanged(idx, idx, {Qt::DisplayRole, Qt::CheckStateRole, Qt::EditRole});
+        return true;
+    }
+
+    if (role != Qt::EditRole) return false;
 
     bool isNull = false;
     ma::Value coerced;

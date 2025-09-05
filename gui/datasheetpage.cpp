@@ -4,14 +4,11 @@
 #include <QTableView>
 #include <QHeaderView>
 #include <QLabel>
-
 #include "../core/Table.h"
 #include "TableModel.h"
-
 #include "../core/DisplayFmt.h"
-#include "delegates/CurrencyDelegate.h"
 #include "delegates/DateTimeDelegate.h"
-#include "booldelegate.h"
+#include "boolcheckdelegate.h"
 
 using namespace ma;
 
@@ -34,15 +31,12 @@ DatasheetPage::DatasheetPage(const QString& basePath, QWidget* parent)
     const auto& s = table_->getSchema();
     for (int c = 0; c < (int)s.fields.size(); ++c) {
         const auto& f = s.fields[c];
-        if (f.type == FieldType::Double && isCurrencyFmt(f.size)) {
-            view_->setItemDelegateForColumn(c, new CurrencyDelegate(view_));
-            view_->setColumnWidth(c, 140);
-        } else if (f.type == FieldType::String && isDateTimeFmt(f.size)) {
+        if (f.type == FieldType::String && isDateTimeFmt(f.size)) {
             view_->setItemDelegateForColumn(c, new DateTimeDelegate(view_));
             view_->setColumnWidth(c, 160);
-        } else if (f.type == FieldType::Bool) {
-            view_->setItemDelegateForColumn(c, new BoolDelegate(view_));
-            view_->setColumnWidth(c, 80);
+        }
+        if (f.type == ma::FieldType::Bool) {
+            view_->setItemDelegateForColumn(c, new BoolCheckDelegate(view_));
         }
     }
 

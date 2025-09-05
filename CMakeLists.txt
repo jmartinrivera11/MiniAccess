@@ -32,7 +32,7 @@ if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
         core/indexstring.h core/indexstring.cpp
         gui/MainWindow.cpp gui/MainWindow.h
         gui/tablemodel.h gui/tablemodel.cpp
-        gui/booldelegate.h gui/booldelegate.cpp
+        gui/boolcheckdelegate.h gui/boolcheckdelegate.cpp
         gui/theme.h gui/theme.cpp
         resources.qrc
         gui/objectsdock.h gui/objectsdock.cpp
@@ -41,7 +41,7 @@ if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
         gui/querybuilderpage.h gui/querybuilderpage.cpp
         gui/relationdesignerpage.h gui/relationdesignerpage.cpp
 
-        gui/delegates/CurrencyDelegate.cpp gui/delegates/CurrencyDelegate.h
+
         gui/delegates/datetimedelegate.h gui/delegates/datetimedelegate.cpp
         gui/formatdelegate.h gui/formatdelegate.cpp
         core/DisplayFmt.h

@@ -235,20 +235,32 @@ void DesignPage::onTypeChanged(int row) {
 }
 
 Schema DesignPage::collectSchema(bool* ok) const {
-    Schema s; s.tableName = "table";
-    for (int r=0; r<grid_->rowCount(); ++r) {
-        auto* itName = grid_->item(r,0);
-        if (!itName || itName->text().trimmed().isEmpty()) { if(ok)*ok=false; return {}; }
-        QString name = itName->text().trimmed();
+    Schema s;
+    s.tableName = "table";
 
-        auto* combo = qobject_cast<QComboBox*>(grid_->cellWidget(r,1));
-        QString tn = combo ? combo->currentText() : "Short Text";
+    QSet<QString> usedNames; // detectar duplicados (case-insensitive)
+
+    for (int r = 0; r < grid_->rowCount(); ++r) {
+        // --- Field Name ---
+        auto* itName = grid_->item(r, 0);
+        if (!itName || itName->text().trimmed().isEmpty()) { if (ok) *ok = false; return {}; }
+        const QString name = itName->text().trimmed();
+
+        // Duplicados
+        const QString key = name.toLower();
+        if (usedNames.contains(key)) { if (ok) *ok = false; return {}; }
+        usedNames.insert(key);
+
+        // --- Data Type ---
+        auto* combo = qobject_cast<QComboBox*>(grid_->cellWidget(r, 1));
+        const QString tn = combo ? combo->currentText() : "Short Text";
         FieldType t = typeToCore(tn);
 
+        // --- Size/Format ---
         uint16_t size = 0;
-        QWidget* ed = grid_->cellWidget(r,2);
+        QWidget* ed = grid_->cellWidget(r, 2);
 
-        if (tn=="CharN") {
+        if (tn == "CharN") {
             if (auto* sp = qobject_cast<QSpinBox*>(ed)) {
                 int v = sp->value();
                 if (v <= 0) v = 16;
@@ -256,45 +268,49 @@ Schema DesignPage::collectSchema(bool* ok) const {
             } else {
                 size = 16;
             }
-        } else if (tn=="Double") {
+        } else if (tn == "Double") {
+            // guardamos "precisión" (decimales) en size
             if (auto* sp = qobject_cast<QSpinBox*>(ed)) {
                 int dec = sp->value();
-                if (dec < 0) dec = 0; if (dec > 19) dec = 19;
+                if (dec < 0) dec = 0;
+                if (dec > 19) dec = 19;
                 size = static_cast<uint16_t>(dec);
             } else {
                 size = 2;
             }
-        } else if (tn=="Number") {
+        } else if (tn == "Number") {
             if (auto* cb = qobject_cast<QComboBox*>(ed)) {
-                size = static_cast<uint16_t>(cb->currentData().toInt());
+                size = static_cast<uint16_t>(cb->currentData().toInt()); // FMT_NUM_*
             } else {
                 size = FMT_NUM_INT32;
             }
-        } else if (tn=="Yes/No") {
+        } else if (tn == "Yes/No") {
             if (auto* cb = qobject_cast<QComboBox*>(ed)) {
-                size = static_cast<uint16_t>(cb->currentData().toInt());
+                size = static_cast<uint16_t>(cb->currentData().toInt()); // FMT_BOOL_*
             } else {
                 size = FMT_BOOL_TRUEFALSE;
             }
-        } else if (tn=="Currency") {
+        } else if (tn == "Currency") {
             if (auto* cb = qobject_cast<QComboBox*>(ed)) {
-                size = static_cast<uint16_t>(cb->currentData().toInt());
+                size = static_cast<uint16_t>(cb->currentData().toInt()); // FMT_CUR_*
             } else {
                 size = FMT_CUR_LPS;
             }
-        } else if (tn=="Date/Time") {
+        } else if (tn == "Date/Time") {
             if (auto* cb = qobject_cast<QComboBox*>(ed)) {
-                size = static_cast<uint16_t>(cb->currentData().toInt());
+                size = static_cast<uint16_t>(cb->currentData().toInt()); // FMT_DT_*
             } else {
                 size = FMT_DT_GENERAL;
             }
         } else {
-            size = 0;
+            size = 0; // Short Text
         }
 
         s.fields.push_back(Field{name.toStdString(), t, size});
     }
-    if (ok) *ok=true; return s;
+
+    if (ok) *ok = true;
+    return s;
 }
 
 bool DesignPage::isTableEmpty() const {
@@ -305,7 +321,7 @@ bool DesignPage::isTableEmpty() const {
 void DesignPage::saveDesign() {
     bool ok=false;
     Schema s = collectSchema(&ok);
-    if (!ok) { banner_->setText("Please complete all field names."); banner_->show(); return; }
+    if (!ok) { banner_->setText("Please complete all field names and avoid duplicates."); banner_->show(); return; }
 
     if (!QFileInfo::exists(basePath_ + ".meta")) {
         banner_->setText("Meta file not found for this table."); banner_->show(); return;
