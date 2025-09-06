@@ -12,10 +12,15 @@ public:
     explicit ObjectsDock(QWidget* parent=nullptr);
     void setProjectPath(const QString& dir);
     void setTables(const QStringList& bases);
+    QString currentSelectedBase() const;
+
+protected:
+    bool eventFilter(QObject* obj, QEvent* ev) override;
 
 signals:
     void openDatasheet(const QString& basePath);
     void openDesign(const QString& basePath);
+    void deleteTableRequested(const QString& basePath);
 
 private slots:
     void newTable();

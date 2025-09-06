@@ -11,11 +11,9 @@
 #include "DesignPage.h"
 #include "QueryBuilderPage.h"
 #include "RelationDesignerPage.h"
-#include <QMessageBox>
 #include <QFont>
 #include <QApplication>
 #include <QFileDialog>
-#include <QDir>
 #include <QInputDialog>
 #include <QTableView>
 #include <QHeaderView>
@@ -27,6 +25,9 @@
 #include <QShowEvent>
 #include <algorithm>
 #include <QFileInfo>
+#include <QFile>
+#include <QCoreApplication>
+#include <QThread>
 
 using namespace ma;
 
@@ -77,6 +78,7 @@ void MainWindow::setupUi() {
     QAction* actNewProject   = fileMenu->addAction(QIcon(":/icons/icons/new.svg"),  "New Project...");
     QAction* actOpenProject  = fileMenu->addAction(QIcon(":/icons/icons/open.svg"), "Open Project...");
     QAction* actCloseProject = fileMenu->addAction(QIcon(":/icons/icons/close.svg"), "Close Current Project");
+    QAction* actDeleteProj   = fileMenu->addAction(QIcon(":/icons/icons/delete.svg"), "Delete Project...");
     fileMenu->addSeparator();
     QAction* actQuit         = fileMenu->addAction("Quit");
 
@@ -115,9 +117,12 @@ void MainWindow::setupUi() {
     makeGroup("Tools");
     QAction* actQuery = new QAction(QIcon(":/icons/icons/query.svg"), "Query Builder", this);
     ribbon->addAction(actQuery);
-
     QAction* actRelations = new QAction(QIcon(":/icons/icons/relation.svg"), "Relation Designer", this);
     ribbon->addAction(actRelations);
+
+    makeGroup("Tables");
+    QAction* actDeleteTable = new QAction(QIcon(":/icons/icons/delete.svg"), "Delete Table...", this);
+    ribbon->addAction(actDeleteTable);
 
     for (auto* btn : ribbon->findChildren<QToolButton*>()) {
         btn->setAutoRaise(false);
@@ -131,10 +136,15 @@ void MainWindow::setupUi() {
     connect(actNewProject,   &QAction::triggered, this, &MainWindow::newProject);
     connect(actOpenProject,  &QAction::triggered, this, &MainWindow::openProject);
     connect(actCloseProject, &QAction::triggered, this, &MainWindow::closeCurrentProject);
+    connect(actDeleteProj,   &QAction::triggered, this, &MainWindow::deleteCurrentProject);
     connect(actQuit,         &QAction::triggered, this, &QWidget::close);
+
+    connect(dock_, &ObjectsDock::deleteTableRequested, this, &MainWindow::deleteTableByBase);
 
     connect(actZoomIn,       &QAction::triggered, this, &MainWindow::zoomIn);
     connect(actZoomOut,      &QAction::triggered, this, &MainWindow::zoomOut);
+
+    connect(actDeleteTable, &QAction::triggered, this, &MainWindow::deleteSelectedTable);
 
     connect(actQuery,        &QAction::triggered, this, &MainWindow::openQueryBuilder);
     connect(actRelations, &QAction::triggered, this, &MainWindow::openRelationDesigner);
@@ -448,4 +458,154 @@ void MainWindow::openProject() {
 
 void MainWindow::closeCurrentProject() {
     setProjectPathAndReload(QString());
+}
+
+bool MainWindow::isMiniAccessProjectDir(const QString& dir) const {
+    if (dir.isEmpty()) return false;
+    QDir d(dir);
+    if (!d.exists()) return false;
+    if (d.exists(".miniaccess")) return true;
+
+    const QStringList metas = d.entryList(QStringList() << "*.meta", QDir::Files);
+    const QStringList mads  = d.entryList(QStringList() << "*.mad",  QDir::Files);
+    return (!metas.isEmpty() || !mads.isEmpty());
+}
+
+void MainWindow::closeTabsForBase(const QString& base) {
+    if (openDatasheets_.contains(base)) {
+        if (QWidget* w = openDatasheets_.value(base)) {
+            if (auto* ds = qobject_cast<DatasheetPage*>(w)) {
+                ds->prepareForClose();
+            }
+            int idx = tabs_->indexOf(w);
+            if (idx >= 0) tabs_->removeTab(idx);
+            delete w;
+        }
+        openDatasheets_.remove(base);
+    }
+
+    if (openDesigns_.contains(base)) {
+        if (QWidget* w = openDesigns_.value(base)) {
+            int idx = tabs_->indexOf(w);
+            if (idx >= 0) tabs_->removeTab(idx);
+            delete w;
+        }
+        openDesigns_.remove(base);
+    }
+
+    QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents, 10);
+}
+
+bool MainWindow::removeTableFiles(const QString& base) {
+    QStringList failed;
+    auto tryRemove = [&](const QString& path){
+        if (!QFileInfo::exists(path)) return true;
+        for (int i = 0; i < 5; ++i) {
+            if (QFile::remove(path)) return true;
+            QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents, 5);
+            QThread::msleep(30);
+        }
+        failed << path;
+        return false;
+    };
+
+    bool ok = true;
+    ok &= tryRemove(base + ".mad");
+    ok &= tryRemove(base + ".meta");
+
+    QFileInfo bi(base);
+    const QString dir = bi.dir().absolutePath();
+    const QString pref = bi.fileName() + ".";
+    QDir d(dir);
+    const QStringList idxs = d.entryList(QStringList() << (pref + "*.idx"), QDir::Files);
+    for (const QString& f : idxs) {
+        ok &= tryRemove(d.filePath(f));
+    }
+
+    if (!ok) {
+        QMessageBox::critical(this, "Delete Table",
+                              "Some files could not be removed. Check permissions.\n\n"
+                                  + failed.join('\n'));
+    }
+    return ok;
+}
+
+void MainWindow::deleteTableByBase(const QString& base) {
+    if (base.isEmpty()) return;
+
+    const QString tableName = QFileInfo(base).fileName();
+    const auto ret = QMessageBox::warning(
+        this, "Delete Table",
+        QString("Delete table \"%1\"?\nThis will permanently remove its data and indexes.")
+            .arg(tableName),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (ret != QMessageBox::Yes) return;
+
+    closeTabsForBase(base);
+
+    if (!removeTableFiles(base)) {
+        QMessageBox::critical(this, "Delete Table",
+                              "Some files could not be removed. Check permissions.");
+        refreshDock();
+        return;
+    }
+
+    if (statusLabel_) statusLabel_->setText(QString("Table \"%1\" deleted").arg(tableName));
+    refreshDock();
+}
+
+void MainWindow::deleteCurrentProject() {
+    if (projectDir_.isEmpty()) {
+        QMessageBox::information(this, "Delete Project", "No project is open.");
+        return;
+    }
+    if (!isMiniAccessProjectDir(projectDir_)) {
+        QMessageBox::warning(this, "Delete Project",
+                             "The current folder doesn't look like a MiniAccess project.\n"
+                             "Aborting for safety.");
+        return;
+    }
+
+    const auto ret = QMessageBox::warning(
+        this, "Delete Project",
+        QString("This will permanently delete the entire project folder:\n\n%1\n\n"
+                "All tables and indexes will be lost. Continue?")
+            .arg(projectDir_),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (ret != QMessageBox::Yes) return;
+
+    while (tabs_->count() > 0) {
+        QWidget* w = tabs_->widget(0);
+        tabs_->removeTab(0);
+        if (w) w->deleteLater();
+    }
+    openDatasheets_.clear();
+    openDesigns_.clear();
+    queryBuilderTab_.clear();
+
+    QDir d(projectDir_);
+    if (d.exists(".miniaccess")) QFile::remove(d.filePath(".miniaccess"));
+
+    bool ok = d.removeRecursively();
+    if (!ok) {
+        QMessageBox::critical(this, "Delete Project",
+                              "The folder could not be removed. Check that files are not in use.");
+        return;
+    }
+
+    projectDir_.clear();
+    setWindowTitle("MiniAccess");
+    refreshDock();
+
+    if (statusLabel_) statusLabel_->setText("Project deleted");
+}
+
+void MainWindow::deleteSelectedTable() {
+    if (!dock_) return;
+    const QString base = dock_->currentSelectedBase();
+    if (base.isEmpty()) {
+        QMessageBox::information(this, "Delete Table", "Select a table in the left panel first.");
+        return;
+    }
+    deleteTableByBase(base);
 }

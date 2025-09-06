@@ -24,6 +24,7 @@ public slots:
     void zoomOutView();
     void setZoom(double factor);
     double zoom() const { return zoom_; }
+    void prepareForClose();
 
 private:
     void setupUi();

@@ -14,6 +14,7 @@
 #include "NewTableDialog.h"
 #include "../core/Table.h"
 #include "../core/Schema.h"
+#include <QKeyEvent>
 
 using namespace ma;
 
@@ -51,6 +52,7 @@ ObjectsDock::ObjectsDock(QWidget* parent) : QDockWidget(parent) {
     list_ = new QListWidget(root_);
     list_->setSelectionMode(QAbstractItemView::SingleSelection);
     list_->setContextMenuPolicy(Qt::CustomContextMenu);
+    list_->viewport()->installEventFilter(this);
     lay->addWidget(list_);
 
     setWidget(root_);
@@ -59,7 +61,22 @@ ObjectsDock::ObjectsDock(QWidget* parent) : QDockWidget(parent) {
     connect(list_, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* it){
         emit openDatasheet(it->data(Qt::UserRole).toString());
     });
-    connect(list_, &QListWidget::customContextMenuRequested, this, &ObjectsDock::onContextMenuRequested);
+    connect(list_, &QListWidget::customContextMenuRequested, this, [this](const QPoint& p){
+        auto* it = list_->itemAt(p);
+        if (!it) return;
+        QString base = it->data(Qt::UserRole).toString();
+
+        QMenu m(this);
+        QAction* aData   = m.addAction("Open Datasheet");
+        QAction* aDesign = m.addAction("Open Design View");
+        m.addSeparator();
+        QAction* aDelete = m.addAction(QIcon(":/icons/icons/delete.svg"), "Delete Table...");
+
+        QAction* chosen = m.exec(list_->viewport()->mapToGlobal(p));
+        if (chosen == aData)      emit openDatasheet(base);
+        else if (chosen == aDesign) emit openDesign(base);
+        else if (chosen == aDelete) emit deleteTableRequested(base);
+    });
     connect(btnNewTable_, &QPushButton::clicked, this, &ObjectsDock::newTable);
 
     projectDir_.clear();
@@ -150,4 +167,25 @@ void ObjectsDock::newTable() {
         QMessageBox::warning(this, "New Table",
                              QString("Error creating table:\n%1").arg(ex.what()));
     }
+}
+
+QString ObjectsDock::currentSelectedBase() const {
+    if (auto* it = list_->currentItem()) {
+        return it->data(Qt::UserRole).toString();
+    }
+    return {};
+}
+
+bool ObjectsDock::eventFilter(QObject* obj, QEvent* ev) {
+    if (obj == list_->viewport() && ev->type() == QEvent::KeyPress) {
+        auto* ke = static_cast<QKeyEvent*>(ev);
+        if (ke->key() == Qt::Key_Delete) {
+            if (auto* it = list_->currentItem()) {
+                const QString base = it->data(Qt::UserRole).toString();
+                if (!base.isEmpty()) emit deleteTableRequested(base);
+                return true;
+            }
+        }
+    }
+    return QDockWidget::eventFilter(obj, ev);
 }

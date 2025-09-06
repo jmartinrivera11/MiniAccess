@@ -33,6 +33,9 @@ private slots:
     void insertRecord();
     void deleteRecord();
     void refreshView();
+    void deleteCurrentProject();
+    void deleteTableByBase(const QString& base);
+    void deleteSelectedTable();
 
 private:
     void setupUi();
@@ -45,12 +48,15 @@ private:
     bool firstShow_ = true;
     QPointer<QWidget> queryBuilderTab_;
     QPointer<QWidget> relationDesignerTab_;
+    void closeTabsForBase(const QString& base);
+    bool removeTableFiles(const QString& base);
+    bool isMiniAccessProjectDir(const QString& dir) const;
 
 private:
     QTabWidget* tabs_{nullptr};
     ObjectsDock* dock_{nullptr};
     QLabel* statusLabel_{nullptr};
-
+    QString projectDir_;
     QHash<QString, QPointer<QWidget>> openDatasheets_;
     QHash<QString, QPointer<QWidget>> openDesigns_;
 

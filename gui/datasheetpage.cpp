@@ -9,6 +9,8 @@
 #include "../core/DisplayFmt.h"
 #include "delegates/DateTimeDelegate.h"
 #include "boolcheckdelegate.h"
+#include <QAbstractItemView>
+#include <QCoreApplication>
 
 using namespace ma;
 
@@ -128,4 +130,21 @@ void DatasheetPage::zoomInView() {
 
 void DatasheetPage::zoomOutView() {
     setZoom(zoom_ - 0.10);
+}
+
+void DatasheetPage::prepareForClose() {
+    if (view_) view_->setModel(nullptr);
+
+    if (model_) {
+        model_->disconnect();
+        model_->deleteLater();
+        model_ = nullptr;
+    }
+
+    if (table_) {
+        table_->close();
+        table_.reset();
+    }
+
+    QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents, 5);
 }
