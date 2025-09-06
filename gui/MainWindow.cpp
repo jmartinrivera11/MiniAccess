@@ -555,14 +555,26 @@ void MainWindow::deleteTableByBase(const QString& base) {
 }
 
 void MainWindow::deleteCurrentProject() {
-    if (projectDir_.isEmpty()) {
-        QMessageBox::information(this, "Delete Project", "No project is open.");
+    QString dir = projectDir_;
+    if (dir.isEmpty()) {
+        if (!openDatasheets_.isEmpty()) {
+            const QString anyBase = openDatasheets_.keys().first();
+            dir = QFileInfo(anyBase).dir().absolutePath();
+        } else if (!openDesigns_.isEmpty()) {
+            const QString anyBase = openDesigns_.keys().first();
+            dir = QFileInfo(anyBase).dir().absolutePath();
+        }
+    }
+
+    if (dir.isEmpty() || !QDir(dir).exists()) {
+        QMessageBox::information(this, "Delete Project", "No project is open (folder not found).");
         return;
     }
-    if (!isMiniAccessProjectDir(projectDir_)) {
+
+    QDir d(dir);
+    if (d.isRoot()) {
         QMessageBox::warning(this, "Delete Project",
-                             "The current folder doesn't look like a MiniAccess project.\n"
-                             "Aborting for safety.");
+                             "Refusing to delete a drive root. Pick a normal folder.");
         return;
     }
 
@@ -570,24 +582,50 @@ void MainWindow::deleteCurrentProject() {
         this, "Delete Project",
         QString("This will permanently delete the entire project folder:\n\n%1\n\n"
                 "All tables and indexes will be lost. Continue?")
-            .arg(projectDir_),
+            .arg(dir),
         QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
     if (ret != QMessageBox::Yes) return;
 
+    auto closeAllForMap = [&](QHash<QString, QPointer<QWidget>>& map){
+        const auto keys = map.keys();
+        for (const QString& base : keys) {
+            if (QWidget* w = map.value(base)) {
+                if (auto* ds = qobject_cast<DatasheetPage*>(w)) {
+                    ds->prepareForClose();
+                }
+                int idx = tabs_->indexOf(w);
+                if (idx >= 0) tabs_->removeTab(idx);
+                delete w;
+            }
+            map.remove(base);
+        }
+    };
+    closeAllForMap(openDatasheets_);
+    closeAllForMap(openDesigns_);
+
+    if (queryBuilderTab_) {
+        int qi = tabs_->indexOf(queryBuilderTab_);
+        if (qi >= 0) tabs_->removeTab(qi);
+        delete queryBuilderTab_;
+        queryBuilderTab_.clear();
+    }
     while (tabs_->count() > 0) {
         QWidget* w = tabs_->widget(0);
         tabs_->removeTab(0);
-        if (w) w->deleteLater();
+        delete w;
     }
-    openDatasheets_.clear();
-    openDesigns_.clear();
-    queryBuilderTab_.clear();
+    QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents, 10);
 
-    QDir d(projectDir_);
-    if (d.exists(".miniaccess")) QFile::remove(d.filePath(".miniaccess"));
+    bool removed = false;
+    for (int i=0; i<3 && !removed; ++i) {
+        removed = d.removeRecursively();
+        if (!removed) {
+            QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents, 10);
+            QThread::msleep(40);
+        }
+    }
 
-    bool ok = d.removeRecursively();
-    if (!ok) {
+    if (!removed) {
         QMessageBox::critical(this, "Delete Project",
                               "The folder could not be removed. Check that files are not in use.");
         return;
@@ -596,7 +634,6 @@ void MainWindow::deleteCurrentProject() {
     projectDir_.clear();
     setWindowTitle("MiniAccess");
     refreshDock();
-
     if (statusLabel_) statusLabel_->setText("Project deleted");
 }
 
