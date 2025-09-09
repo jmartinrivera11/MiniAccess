@@ -21,7 +21,7 @@ DatasheetPage::DatasheetPage(const QString& basePath, QWidget* parent)
     table_ = std::make_unique<Table>();
     table_->open(basePath_.toStdString());
 
-    model_ = new TableModel(table_.get(), this);
+    model_ = new TableModel(table_.get(), basePath_, this);
     view_->setModel(model_);
 
     QFont f0 = view_->font();

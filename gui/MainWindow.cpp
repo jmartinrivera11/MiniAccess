@@ -447,7 +447,6 @@ void MainWindow::openProject() {
     setProjectPathAndReload(folder);
 }
 
-
 void MainWindow::closeCurrentProject() {
     setProjectPathAndReload(QString());
 }

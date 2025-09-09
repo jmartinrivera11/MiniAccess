@@ -9,8 +9,20 @@
 #include "../core/DisplayFmt.h"
 #include <climits>
 #include <algorithm>
+#include <QFile>
+#include <QTextStream>
+#include <unordered_set>
+#include <QStringConverter>
 
 using namespace ma;
+
+static inline void setUtf8(QTextStream& ts) {
+    #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+        ts.setEncoding(QStringConverter::Utf8);
+    #else
+        ts.setCodec("UTF-8");
+    #endif
+}
 
 static inline QString currencySymbol(uint16_t sz) {
     if (sz == FMT_CUR_LPS) return "L";
@@ -33,21 +45,23 @@ static inline QString boolLabel(bool v, uint16_t fmt) {
 }
 
 TableModel::TableModel(Table* table, QObject* parent)
-    : QAbstractTableModel(parent), table_(table), schema_(table->getSchema()) {
-    reload();
+    : TableModel(table, QString(), parent) {}
+
+TableModel::TableModel(Table* table, const QString& basePath, QObject* parent)
+    : QAbstractTableModel(parent), table_(table), schema_(table->getSchema()), basePath_(basePath)
+{
+    std::vector<ma::RID> scanned = table_->scanAll();
+    rids_ = mergeWithOrder(scanned);
+    rebuildCacheFromRids();
 }
 
 void TableModel::reload() {
     beginResetModel();
-    rids_.clear();
-    cache_.clear();
-    rids_ = table_->scanAll();
-    cache_.reserve(rids_.size());
-    for (const auto& rid : rids_) {
-        auto rec = table_->read(rid);
-        cache_.push_back(rec.value_or(Record::withFieldCount((int)schema_.fields.size())));
-    }
+    std::vector<ma::RID> scanned = table_->scanAll();
+    rids_ = mergeWithOrder(scanned);
+    rebuildCacheFromRids();
     endResetModel();
+    saveOrder();
 }
 
 int TableModel::rowCount(const QModelIndex&) const { return (int)rids_.size(); }
@@ -341,6 +355,7 @@ bool TableModel::setData(const QModelIndex& idx, const QVariant& v, int role) {
 
     rids_[row]  = *maybeNewRid;
     cache_[row] = rec;
+    saveOrder();
 
     emit dataChanged(idx, idx, {Qt::DisplayRole, Qt::EditRole});
     return true;
@@ -355,6 +370,7 @@ bool TableModel::insertRows(int, int count, const QModelIndex&) {
         rids_.push_back(rid);
         cache_.push_back(rec);
     }
+    saveOrder();
     endInsertRows();
     return true;
 }
@@ -365,6 +381,7 @@ bool TableModel::removeRows(int row, int count, const QModelIndex&) {
     for (int i=0;i<count;i++) table_->erase(rids_[row+i]);
     rids_.erase(rids_.begin()+row, rids_.begin()+row+count);
     cache_.erase(cache_.begin()+row, cache_.begin()+row+count);
+    saveOrder();
     endRemoveRows();
     return true;
 }
@@ -382,4 +399,87 @@ Record TableModel::makeDefaultRecord() const {
         }
     }
     return r;
+}
+
+QString TableModel::orderFilePath() const {
+    return basePath_.isEmpty() ? QString() : (basePath_ + ".ord");
+}
+
+std::vector<ma::RID> TableModel::loadOrder() const {
+    std::vector<ma::RID> out;
+    const QString fn = orderFilePath();
+    if (fn.isEmpty() || !QFile::exists(fn)) return out;
+
+    QFile f(fn);
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) return out;
+
+    QTextStream ts(&f);
+    setUtf8(ts);
+    const QString magic = ts.readLine().trimmed();
+    if (magic != "ORD1") return out;
+
+    while (!ts.atEnd()) {
+        const QString line = ts.readLine().trimmed();
+        if (line.isEmpty()) continue;
+        const QStringList parts = line.split(' ', Qt::SkipEmptyParts);
+        if (parts.size() != 2) continue;
+        bool ok1=false, ok2=false;
+        uint32_t pg = parts[0].toUInt(&ok1);
+        uint16_t sl = parts[1].toUShort(&ok2);
+        if (ok1 && ok2) out.push_back(ma::RID{pg, sl});
+    }
+    return out;
+}
+
+void TableModel::saveOrder() const {
+    const QString fn = orderFilePath();
+    if (fn.isEmpty()) return;
+
+    QFile f(fn);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) return;
+
+    QTextStream ts(&f);
+    setUtf8(ts);
+    ts << "ORD1\n";
+    for (const auto& rid : rids_) {
+        ts << rid.pageId << ' ' << rid.slotId << '\n';
+    }
+}
+
+static inline quint64 packRid(uint32_t p, uint16_t s) {
+    return (static_cast<quint64>(p) << 16) | s;
+}
+
+std::vector<ma::RID> TableModel::mergeWithOrder(const std::vector<ma::RID>& scanned) const {
+    if (basePath_.isEmpty()) return scanned;
+
+    std::unordered_set<quint64> present;
+    present.reserve(scanned.size());
+    for (const auto& r : scanned) present.insert(packRid(r.pageId, r.slotId));
+
+    std::vector<ma::RID> out;
+    auto ord = loadOrder();
+    out.reserve(scanned.size());
+    std::unordered_set<quint64> emitted;
+    emitted.reserve(scanned.size());
+
+    for (const auto& r : ord) {
+        const quint64 k = packRid(r.pageId, r.slotId);
+        if (present.count(k)) { out.push_back(r); emitted.insert(k); }
+    }
+
+    for (const auto& r : scanned) {
+        const quint64 k = packRid(r.pageId, r.slotId);
+        if (!emitted.count(k)) { out.push_back(r); emitted.insert(k); }
+    }
+    return out;
+}
+
+void TableModel::rebuildCacheFromRids() {
+    cache_.clear();
+    cache_.reserve(rids_.size());
+    for (const auto& rid : rids_) {
+        auto rec = table_->read(rid);
+        cache_.push_back(rec.value_or(Record::withFieldCount((int)schema_.fields.size())));
+    }
 }

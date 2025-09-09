@@ -2,12 +2,14 @@
 #include <QAbstractTableModel>
 #include <vector>
 #include <optional>
+#include <QString>
 #include "../core/Table.h"
 
 class TableModel : public QAbstractTableModel {
     Q_OBJECT
 public:
     explicit TableModel(ma::Table* table, QObject* parent=nullptr);
+    explicit TableModel(ma::Table* table, const QString& basePath, QObject* parent=nullptr);
 
     int rowCount(const QModelIndex& parent = QModelIndex()) const override;
     int columnCount(const QModelIndex& parent = QModelIndex()) const override;
@@ -26,9 +28,16 @@ private:
     QVariant toVariant(const std::optional<ma::Value>& ov) const;
     ma::Value fromVariant(int col, const QVariant& qv) const;
 
+    QString orderFilePath() const;
+    std::vector<ma::RID> loadOrder() const;
+    void saveOrder() const;
+    std::vector<ma::RID> mergeWithOrder(const std::vector<ma::RID>& scanned) const;
+    void rebuildCacheFromRids();
+
 private:
     ma::Table* table_{nullptr};
     ma::Schema schema_{};
     std::vector<ma::RID> rids_;
     std::vector<ma::Record> cache_;
+    QString basePath_;
 };
