@@ -13,6 +13,11 @@
 #include <QSignalBlocker>
 #include "../core/Table.h"
 #include "../core/DisplayFmt.h"
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <algorithm>
+#include <cctype>
 
 using namespace ma;
 
@@ -53,6 +58,97 @@ static int defaultCodeForType(const QString& t) {
     if (s=="date/time") return FMT_DT_GENERAL;
     if (s=="charn")   return 16;
     return 0;
+}
+
+// --- Helpers de conversión: Value -> tipos nativos ---
+static bool toInt32(const ma::Value& v, int32_t& out) {
+    if (std::holds_alternative<int>(v)) { out = std::get<int>(v); return true; }
+    if (std::holds_alternative<long long>(v)) { long long x = std::get<long long>(v);
+        if (x < INT_MIN || x > INT_MAX) return false; out = (int32_t)x; return true; }
+    if (std::holds_alternative<double>(v)) { out = static_cast<int32_t>(std::get<double>(v)); return true; }
+    if (std::holds_alternative<bool>(v)) { out = std::get<bool>(v) ? 1 : 0; return true; }
+    if (std::holds_alternative<std::string>(v)) {
+        try { out = static_cast<int32_t>(std::stoll(std::get<std::string>(v))); return true; } catch (...) { return false; }
+    }
+    return false;
+}
+
+static bool toDouble(const ma::Value& v, double& out) {
+    if (std::holds_alternative<double>(v)) { out = std::get<double>(v); return true; }
+    if (std::holds_alternative<int>(v)) { out = static_cast<double>(std::get<int>(v)); return true; }
+    if (std::holds_alternative<long long>(v)) { out = static_cast<double>(std::get<long long>(v)); return true; }
+    if (std::holds_alternative<bool>(v)) { out = std::get<bool>(v) ? 1.0 : 0.0; return true; }
+    if (std::holds_alternative<std::string>(v)) {
+        try { out = std::stod(std::get<std::string>(v)); return true; } catch (...) { return false; }
+    }
+    return false;
+}
+
+static bool toBool(const ma::Value& v, bool& out) {
+    if (std::holds_alternative<bool>(v)) { out = std::get<bool>(v); return true; }
+    if (std::holds_alternative<int>(v)) { out = std::get<int>(v) != 0; return true; }
+    if (std::holds_alternative<long long>(v)) { out = std::get<long long>(v) != 0; return true; }
+    if (std::holds_alternative<double>(v)) { out = (std::get<double>(v) != 0.0); return true; }
+    if (std::holds_alternative<std::string>(v)) {
+        std::string s = std::get<std::string>(v);
+        std::string t; t.reserve(s.size());
+        for (char c : s) t.push_back(std::tolower(static_cast<unsigned char>(c)));
+        if (t=="true" || t=="yes" || t=="si" || t=="on" || t=="1") { out = true;  return true; }
+        if (t=="false"|| t=="no"  || t=="off"|| t=="0")             { out = false; return true; }
+        return false;
+    }
+    return false;
+}
+
+static bool toString(const ma::Value& v, std::string& out) {
+    if (std::holds_alternative<std::string>(v)) { out = std::get<std::string>(v); return true; }
+    if (std::holds_alternative<int>(v)) { out = std::to_string(std::get<int>(v)); return true; }
+    if (std::holds_alternative<long long>(v)) { out = std::to_string(std::get<long long>(v)); return true; }
+    if (std::holds_alternative<double>(v)) { out = std::to_string(std::get<double>(v)); return true; }
+    if (std::holds_alternative<bool>(v)) { out = std::get<bool>(v) ? "true" : "false"; return true; }
+    return false;
+}
+
+// --- Mapear campos por nombre: newIdx -> oldIdx (o -1 si no existía) ---
+static std::vector<int> buildFieldMap(const ma::Schema& oldS, const ma::Schema& newS) {
+    std::vector<int> map(newS.fields.size(), -1);
+    for (size_t i=0; i<newS.fields.size(); ++i) {
+        const auto& nf = newS.fields[i].name;
+        for (size_t j=0; j<oldS.fields.size(); ++j) {
+            if (oldS.fields[j].name == nf) { map[i] = static_cast<int>(j); break; }
+        }
+    }
+    return map;
+}
+
+// --- Convertir un valor antiguo al campo nuevo (con truncamientos seguros) ---
+static std::optional<ma::Value> convertValueForNewField(const ma::Field& newF,
+                                                        const std::optional<ma::Value>& oldVal,
+                                                        const ma::Field* oldF /*puede ser null*/) {
+    if (!oldVal.has_value()) return std::nullopt;
+
+    const ma::Value& v = oldVal.value();
+    switch (newF.type) {
+    case ma::FieldType::Int32: {
+        int32_t x; if (!toInt32(v, x)) return std::nullopt; return ma::Value{x};
+    }
+    case ma::FieldType::Double: {
+        double d; if (!toDouble(v, d)) return std::nullopt; return ma::Value{d};
+    }
+    case ma::FieldType::Bool: {
+        bool b; if (!toBool(v, b)) return std::nullopt; return ma::Value{b};
+    }
+    case ma::FieldType::String: {
+        std::string s; if (!toString(v, s)) return std::nullopt; return ma::Value{s};
+    }
+    case ma::FieldType::CharN: {
+        std::string s; if (!toString(v, s)) return std::nullopt;
+        if (newF.size > 0 && s.size() > newF.size) s.resize(newF.size); // truncar
+        return ma::Value{s};
+    }
+    default:
+        return std::nullopt;
+    }
 }
 
 DesignPage::DesignPage(const QString& basePath, QWidget* parent)
@@ -238,25 +334,21 @@ Schema DesignPage::collectSchema(bool* ok) const {
     Schema s;
     s.tableName = "table";
 
-    QSet<QString> usedNames; // detectar duplicados (case-insensitive)
+    QSet<QString> usedNames;
 
     for (int r = 0; r < grid_->rowCount(); ++r) {
-        // --- Field Name ---
         auto* itName = grid_->item(r, 0);
         if (!itName || itName->text().trimmed().isEmpty()) { if (ok) *ok = false; return {}; }
         const QString name = itName->text().trimmed();
 
-        // Duplicados
         const QString key = name.toLower();
         if (usedNames.contains(key)) { if (ok) *ok = false; return {}; }
         usedNames.insert(key);
 
-        // --- Data Type ---
         auto* combo = qobject_cast<QComboBox*>(grid_->cellWidget(r, 1));
         const QString tn = combo ? combo->currentText() : "Short Text";
         FieldType t = typeToCore(tn);
 
-        // --- Size/Format ---
         uint16_t size = 0;
         QWidget* ed = grid_->cellWidget(r, 2);
 
@@ -269,7 +361,6 @@ Schema DesignPage::collectSchema(bool* ok) const {
                 size = 16;
             }
         } else if (tn == "Double") {
-            // guardamos "precisión" (decimales) en size
             if (auto* sp = qobject_cast<QSpinBox*>(ed)) {
                 int dec = sp->value();
                 if (dec < 0) dec = 0;
@@ -320,26 +411,122 @@ bool DesignPage::isTableEmpty() const {
 
 void DesignPage::saveDesign() {
     bool ok=false;
-    Schema s = collectSchema(&ok);
-    if (!ok) { banner_->setText("Please complete all field names and avoid duplicates."); banner_->show(); return; }
-
-    if (!QFileInfo::exists(basePath_ + ".meta")) {
-        banner_->setText("Meta file not found for this table."); banner_->show(); return;
+    Schema newS = collectSchema(&ok);
+    if (!ok) {
+        banner_->setText("Please complete all field names and avoid duplicates.");
+        banner_->show();
+        return;
     }
 
+    const QString base = basePath_;
+    const QString meta = base + ".meta";
+    const QString mad  = base + ".mad";
+
+    const bool exists = QFileInfo::exists(meta) || QFileInfo::exists(mad);
+    if (!exists) {
+        try {
+            ma::Table t; t.create(base.toStdString(), newS);
+            banner_->setText("Design saved (new table created).");
+            banner_->show();
+        } catch (const std::exception& ex) {
+            banner_->setText(QString("Error creating table: %1").arg(ex.what()));
+            banner_->show();
+        }
+        return;
+    }
+
+    ma::Schema oldS;
+    size_t rowCount = 0;
     try {
-        if (!isTableEmpty()) {
-            banner_->setText("Table has data. Online schema migration (ALTER TABLE) llegará en Fase 3.");
+        ma::Table told; told.open(base.toStdString());
+        oldS = told.getSchema();
+        rowCount = told.scanCount();
+    } catch (const std::exception& ex) {
+        banner_->setText(QString("Error opening current table: %1").arg(ex.what()));
+        banner_->show();
+        return;
+    }
+
+    if (rowCount == 0) {
+        try {
+            ma::Table t; t.create(base.toStdString(), newS);
+            banner_->setText("Design saved (empty table recreated).");
+            banner_->show();
+            return;
+        } catch (const std::exception& ex) {
+            banner_->setText(QString("Error saving design: %1").arg(ex.what()));
             banner_->show();
             return;
         }
+    }
 
-        Table t; t.create(basePath_.toStdString(), s);
-        banner_->setText("Design saved successfully.");
+    const QString tmpBase = base + ".tmp_schema";
+    const QString tmpMeta = tmpBase + ".meta";
+    const QString tmpMad  = tmpBase + ".mad";
+
+    QFile::remove(tmpMeta);
+    QFile::remove(tmpMad);
+
+    try {
+        ma::Table told; told.open(base.toStdString());
+        ma::Table tnew; tnew.create(tmpBase.toStdString(), newS);
+
+        auto fmap = buildFieldMap(oldS, newS);
+
+        const auto rids = told.scanAll();
+        for (const auto& rid : rids) {
+            auto recOld = told.read(rid);
+            if (!recOld) continue;
+
+            ma::Record recNew = ma::Record::withFieldCount(static_cast<int>(newS.fields.size()));
+            for (size_t i=0; i<newS.fields.size(); ++i) {
+                int j = fmap[i];
+                const ma::Field& nF = newS.fields[i];
+                const ma::Field* oF = (j>=0 ? &oldS.fields[j] : nullptr);
+                const std::optional<ma::Value> oldVal = (j>=0 ? (*recOld).values[j] : std::optional<ma::Value>{});
+
+                recNew.values[i] = convertValueForNewField(nF, oldVal, oF);
+            }
+            tnew.insert(recNew);
+        }
+
+        told.close();
+        tnew.close();
+
+        QFileInfo bi(base);
+        const QString dir = bi.dir().absolutePath();
+        const QString pref = bi.fileName() + ".";
+        QDir d(dir);
+        const QStringList idxs = d.entryList(QStringList() << (pref + "*.idx"), QDir::Files);
+        for (const QString& f : idxs) {
+            QFile::remove(d.filePath(f));
+        }
+
+        if (!QFile::remove(mad) || !QFile::remove(meta)) {
+            banner_->setText("Close any open Datasheet for this table and try Save again.");
+            banner_->show();
+            QFile::remove(tmpMeta);
+            QFile::remove(tmpMad);
+            return;
+        }
+
+        if (!QFile::rename(tmpMeta, meta) || !QFile::rename(tmpMad, mad)) {
+            banner_->setText("Error swapping temp files. Design NOT saved.");
+            banner_->show();
+            QFile::remove(tmpMeta);
+            QFile::remove(tmpMad);
+            return;
+        }
+
+        banner_->setText("Design saved. Data migrated to new schema. Indexes were removed; recreate if needed.");
         banner_->show();
+
     } catch (const std::exception& ex) {
-        banner_->setText(QString("Error saving design: %1").arg(ex.what()));
+        QFile::remove(tmpMeta);
+        QFile::remove(tmpMad);
+        banner_->setText(QString("Error during migration: %1").arg(ex.what()));
         banner_->show();
+        return;
     }
 }
 

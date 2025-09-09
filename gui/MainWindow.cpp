@@ -444,17 +444,9 @@ void MainWindow::openProject() {
                              "Please select a valid folder.");
         return;
     }
-
     setProjectPathAndReload(folder);
-
-    QDir d(currentProjectPath_);
-    const QStringList metas = d.entryList(QStringList() << "*.meta", QDir::Files, QDir::Name);
-    for (const QString& m : metas) {
-        QString base = d.absoluteFilePath(m);
-        if (base.endsWith(".meta")) base.chop(5);
-        ensureDatasheetTab(base);
-    }
 }
+
 
 void MainWindow::closeCurrentProject() {
     setProjectPathAndReload(QString());
