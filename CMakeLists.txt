@@ -48,6 +48,7 @@ if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
         gui/querymodel.h gui/querymodel.cpp
         gui/newtabledialog.h gui/newtabledialog.cpp
 
+
     )
 # Define target properties for Android with Qt 6 as:
 #    set_property(TARGET MiniAccess APPEND PROPERTY QT_ANDROID_PACKAGE_SOURCE_DIR
