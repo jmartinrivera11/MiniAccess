@@ -23,7 +23,6 @@
 #include <QMessageBox>
 #include <QTimer>
 #include <QGraphicsPathItem>
-
 #include "../core/Table.h"
 #include "../core/Schema.h"
 
@@ -32,8 +31,16 @@ using namespace ma;
 static QFont titleFont() {
     QFont f; f.setBold(true); f.setPointSize(10); return f;
 }
+
 static QFont fieldFont() {
     QFont f; f.setPointSize(9); return f;
+}
+
+static QString projectDirFromBase(const QString& basePath) {
+    return QFileInfo(basePath).dir().absolutePath();
+}
+static QString relationsPathForProject(const QString& anyTableBase) {
+    return QDir(projectDirFromBase(anyTableBase)).filePath("relations.json");
 }
 
 RelationDesignerPage::RelationDesignerPage(const QString& projectDir, QWidget* parent)
@@ -396,3 +403,59 @@ void RelationDesignerPage::onSceneChanged() {
 
 void RelationDesignerPage::zoomIn()  { view_->scale(1.1, 1.1); }
 void RelationDesignerPage::zoomOut() { view_->scale(0.9, 0.9); }
+
+void RelationDesignerPage::saveRelations() {
+    QJsonArray arr;
+    for (const auto& r : relations_) {
+        QJsonObject o;
+        o["lt"] = r.lt;
+        o["lf"] = r.lf;
+        o["rt"] = r.rt;
+        o["rf"] = r.rf;
+        o["type"] = r.type;
+        o["cascadeDelete"] = r.cascadeDel;
+        o["cascadeUpdate"] = r.cascadeUpd;
+        arr.push_back(o);
+    }
+    QJsonDocument doc(arr);
+
+    const QString path = QDir::current().filePath("relations.json");
+    QFile f(path);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        QMessageBox::warning(this, "Relations", "Cannot write relations.json");
+        return;
+    }
+    f.write(doc.toJson(QJsonDocument::Indented));
+    f.close();
+    QMessageBox::information(this, "Relations", "Relations saved.");
+}
+
+void RelationDesignerPage::loadRelations() {
+    relations_.clear();
+
+    const QString path = QDir::current().filePath("relations.json");
+    QFile f(path);
+    if (!f.exists()) return;
+    if (!f.open(QIODevice::ReadOnly)) {
+        QMessageBox::warning(this, "Relations", "Cannot read relations.json");
+        return;
+    }
+    const auto doc = QJsonDocument::fromJson(f.readAll());
+    f.close();
+
+    const auto arr = doc.array();
+    for (const auto& v : arr) {
+        const auto o = v.toObject();
+        Rel r;
+        r.lt = o.value("lt").toString();
+        r.lf = o.value("lf").toString();
+        r.rt = o.value("rt").toString();
+        r.rf = o.value("rf").toString();
+        r.type = o.value("type").toString();
+        r.cascadeDel = o.value("cascadeDelete").toBool();
+        r.cascadeUpd = o.value("cascadeUpdate").toBool();
+        r.link = nullptr;
+        relations_.push_back(r);
+    }
+    redrawAllLinks();
+}

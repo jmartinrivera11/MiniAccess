@@ -14,15 +14,16 @@ FormatDelegate::FormatDelegate(QTableWidget* owner, QObject* parent)
 QString FormatDelegate::typeAt(const QModelIndex& index) const {
     if (!grid_) return {};
     const int row = index.row();
-    if (auto* cb = qobject_cast<QComboBox*>(grid_->cellWidget(row, 1))) {
+    if (auto* cb = qobject_cast<QComboBox*>(grid_->cellWidget(row, 2))) {
         return cb->currentText();
     }
-    return index.sibling(row, 1).data(Qt::DisplayRole).toString();
+    return index.sibling(row, 2).data(Qt::DisplayRole).toString();
 }
 
 QString FormatDelegate::labelFor(const QString& typeName, int code) {
-    const QString t = typeName.toLower();
-    if (t.contains("bool")) {
+    const QString t = typeName;
+
+    if (t == "Yes/No") {
         switch (code) {
         case FMT_BOOL_TRUEFALSE: return "True/False";
         case FMT_BOOL_YESNO:     return "Yes/No";
@@ -30,7 +31,7 @@ QString FormatDelegate::labelFor(const QString& typeName, int code) {
         default: return "True/False";
         }
     }
-    if (t.contains("int")) {
+    if (t == "Number") {
         switch (code) {
         case FMT_NUM_BYTE:  return "Byte";
         case FMT_NUM_INT16: return "Integer";
@@ -38,74 +39,71 @@ QString FormatDelegate::labelFor(const QString& typeName, int code) {
         default: return "Long Integer";
         }
     }
-    if (t.contains("double")) {
-        if (isCurrencyFmt(code)) {
-            switch (code) {
-            case FMT_CUR_LPS: return "Lempiras (L)";
-            case FMT_CUR_USD: return "US Dollar ($)";
-            case FMT_CUR_EUR: return "Euro (€)";
-            }
-            return "Currency";
-        } else if (isDoublePrecision(code)) {
-            return QString("%1 decimals").arg(code);
-        } else {
-            return "Standard";
+    if (t == "Currency") {
+        switch (code) {
+        case FMT_CUR_LPS: return "Lempiras (L)";
+        case FMT_CUR_USD: return "US Dollar ($)";
+        case FMT_CUR_EUR: return "Euro (€)";
+        default:          return "Currency";
         }
     }
-    if (t.contains("string") || t.contains("text") || t.contains("date")) {
+    if (t == "Double") {
+        return QString("%1 decimals").arg(std::max(0, code));
+    }
+    if (t == "Date/Time") {
         switch (code) {
         case FMT_DT_GENERAL:   return "General Date";
         case FMT_DT_LONGDATE:  return "Long Date";
         case FMT_DT_SHORTDATE: return "Short Date";
         case FMT_DT_LONGTIME:  return "Long Time";
         case FMT_DT_SHORTTIME: return "Short Time";
-        case FMT_NONE:         return "Plain Text";
-        default: return "Plain Text";
+        default:               return "General Date";
         }
     }
-    if (t.contains("charn") || t.contains("char")) {
+    if (t == "CharN") {
         return QString("%1 chars").arg(std::max(1, code));
+    }
+    if (t == "Short Text") {
+        return QString("%1 max").arg(std::max(1, code));
     }
     return {};
 }
 
 QWidget* FormatDelegate::createEditor(QWidget* parent, const QStyleOptionViewItem&,
                                       const QModelIndex& index) const {
-    if (!grid_ || index.column()!=2) return nullptr;
+    if (!grid_ || index.column() != 3) return nullptr;
 
-    const QString t = typeAt(index).toLower();
-    if (t.contains("bool")) {
+    const QString t = typeAt(index);
+
+    if (t == "Yes/No") {
         auto* cb = new QComboBox(parent);
         cb->addItem("True/False", FMT_BOOL_TRUEFALSE);
         cb->addItem("Yes/No",     FMT_BOOL_YESNO);
         cb->addItem("On/Off",     FMT_BOOL_ONOFF);
         return cb;
     }
-    if (t.contains("int")) {
+    if (t == "Number") {
         auto* cb = new QComboBox(parent);
         cb->addItem("Byte",          FMT_NUM_BYTE);
         cb->addItem("Integer (16)",  FMT_NUM_INT16);
         cb->addItem("Long Integer",  FMT_NUM_INT32);
         return cb;
     }
-    if (t.contains("double")) {
-        const int v = index.data(Qt::EditRole).toInt();
-        if (isCurrencyFmt(v)) {
-            auto* cb = new QComboBox(parent);
-            cb->addItem("Lempiras (L)",  FMT_CUR_LPS);
-            cb->addItem("US Dollar ($)", FMT_CUR_USD);
-            cb->addItem("Euro (€)",      FMT_CUR_EUR);
-            return cb;
-        } else {
-            auto* sp = new QSpinBox(parent);
-            sp->setRange(0, 9);
-            sp->setSuffix(" decimals");
-            return sp;
-        }
-    }
-    if (t.contains("string") || t.contains("text") || t.contains("date")) {
+    if (t == "Currency") {
         auto* cb = new QComboBox(parent);
-        cb->addItem("Plain Text",   FMT_NONE);
+        cb->addItem("Lempiras (L)",  FMT_CUR_LPS);
+        cb->addItem("US Dollar ($)", FMT_CUR_USD);
+        cb->addItem("Euro (€)",      FMT_CUR_EUR);
+        return cb;
+    }
+    if (t == "Double") {
+        auto* sp = new QSpinBox(parent);
+        sp->setRange(0, 9);
+        sp->setSuffix(" decimals");
+        return sp;
+    }
+    if (t == "Date/Time") {
+        auto* cb = new QComboBox(parent);
         cb->addItem("General Date", FMT_DT_GENERAL);
         cb->addItem("Long Date",    FMT_DT_LONGDATE);
         cb->addItem("Short Date",   FMT_DT_SHORTDATE);
@@ -113,15 +111,20 @@ QWidget* FormatDelegate::createEditor(QWidget* parent, const QStyleOptionViewIte
         cb->addItem("Short Time",   FMT_DT_SHORTTIME);
         return cb;
     }
-    if (t.contains("charn") || t.contains("char")) {
+    if (t == "CharN") {
         auto* sp = new QSpinBox(parent);
         sp->setRange(1, 255);
         sp->setSuffix(" chars");
         return sp;
     }
-    auto* sp = new QSpinBox(parent);
-    sp->setRange(0, 9999);
-    return sp;
+    if (t == "Short Text") {
+        auto* sp = new QSpinBox(parent);
+        sp->setRange(1, 255);
+        sp->setSuffix(" max");
+        return sp;
+    }
+
+    return nullptr;
 }
 
 void FormatDelegate::setEditorData(QWidget* editor, const QModelIndex& index) const {
