@@ -13,8 +13,171 @@
 #include <QTextStream>
 #include <unordered_set>
 #include <QStringConverter>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
+#include <QFileInfo>
+#include <QDir>
 
 using namespace ma;
+
+struct Relation {
+    QString childName;
+    QString childField;
+    QString parentName;
+    QString parentField;
+    bool cascadeDelete{false};
+    bool cascadeUpdate{false};
+};
+
+static inline QString projectDirFromBase(const QString& basePath) {
+    return QFileInfo(basePath).dir().absolutePath();
+}
+
+static inline QString basePathForTableName(const QString& projectDir, const QString& tableName) {
+    return QDir(projectDir).filePath(tableName);
+}
+
+static QString loadPrimaryKeyNameForBase(const QString& basePath) {
+    const QString fn = basePath + ".keys.json";
+    QFile f(fn);
+    if (!f.exists() || !f.open(QIODevice::ReadOnly)) return {};
+    const auto doc = QJsonDocument::fromJson(f.readAll());
+    return doc.object().value("primaryKey").toString();
+}
+
+static QVector<Relation> loadAllRelationsInProjectForBase(const QString& basePath) {
+    QVector<Relation> out;
+    const QString relPath = QDir(projectDirFromBase(basePath)).filePath("relations.json");
+    QFile f(relPath);
+    if (!f.exists() || !f.open(QIODevice::ReadOnly)) return out;
+
+    const auto arr = QJsonDocument::fromJson(f.readAll()).array();
+    for (const auto& v : arr) {
+        const auto o = v.toObject();
+        Relation r;
+        r.childName     = o.value("lt").toString();
+        r.childField    = o.value("lf").toString();
+        r.parentName    = o.value("rt").toString();
+        r.parentField   = o.value("rf").toString();
+        r.cascadeDelete = o.value("cascadeDelete").toBool();
+        r.cascadeUpdate = o.value("cascadeUpdate").toBool();
+        if (!r.childName.isEmpty() && !r.childField.isEmpty() &&
+            !r.parentName.isEmpty() && !r.parentField.isEmpty()) {
+            out.push_back(r);
+        }
+    }
+    return out;
+}
+
+static QVector<Relation> relationsWhereBaseIsChild(const QString& basePath) {
+    const QString myName = QFileInfo(basePath).fileName();
+    QVector<Relation> out;
+    for (const auto& r : loadAllRelationsInProjectForBase(basePath)) {
+        if (r.childName.compare(myName, Qt::CaseInsensitive)==0) out.push_back(r);
+    }
+    return out;
+}
+static QVector<Relation> relationsWhereBaseIsParent(const QString& basePath) {
+    const QString myName = QFileInfo(basePath).fileName();
+    QVector<Relation> out;
+    for (const auto& r : loadAllRelationsInProjectForBase(basePath)) {
+        if (r.parentName.compare(myName, Qt::CaseInsensitive)==0) out.push_back(r);
+    }
+    return out;
+}
+
+static int fieldIndexByName(const ma::Schema& s, const QString& name) {
+    for (int i=0;i<(int)s.fields.size();++i)
+        if (QString::fromStdString(s.fields[i].name).compare(name, Qt::CaseInsensitive)==0)
+            return i;
+    return -1;
+}
+
+static bool valuesEqual(const std::optional<ma::Value>& a, const std::optional<ma::Value>& b) {
+    if (!a.has_value() && !b.has_value()) return true;
+    if (a.has_value() != b.has_value()) return false;
+    const ma::Value& va = a.value();
+    const ma::Value& vb = b.value();
+    if (va.index()!=vb.index()) return false;
+
+    if (std::holds_alternative<int>(va))           return std::get<int>(va)==std::get<int>(vb);
+    if (std::holds_alternative<long long>(va))     return std::get<long long>(va)==std::get<long long>(vb);
+    if (std::holds_alternative<double>(va))        return std::get<double>(va)==std::get<double>(vb);
+    if (std::holds_alternative<bool>(va))          return std::get<bool>(va)==std::get<bool>(vb);
+    if (std::holds_alternative<std::string>(va))   return std::get<std::string>(va)==std::get<std::string>(vb);
+    return false;
+}
+
+static bool valueExistsInParent(const QString& basePathOfThis,
+                                const Relation& rel,
+                                const ma::Value& fkVal) {
+    try {
+        const QString pd    = projectDirFromBase(basePathOfThis);
+        const QString pbase = basePathForTableName(pd, rel.parentName);
+        ma::Table pt; pt.open(pbase.toStdString());
+        const auto ps = pt.getSchema();
+        const int col = fieldIndexByName(ps, rel.parentField);
+        if (col < 0) return false;
+        for (const auto& rid : pt.scanAll()) {
+            auto rec = pt.read(rid);
+            if (rec && valuesEqual(rec->values[col], fkVal)) return true;
+        }
+        return false;
+    } catch (...) { return false; }
+}
+
+static void cascadeDeleteChildren(const QString& basePathOfThis,
+                                  const Relation& rel,
+                                  const ma::Value& parentKeyVal) {
+    try {
+        const QString pd    = projectDirFromBase(basePathOfThis);
+        const QString cbase = basePathForTableName(pd, rel.childName);
+        ma::Table ct; ct.open(cbase.toStdString());
+        const auto cs = ct.getSchema();
+        const int col = fieldIndexByName(cs, rel.childField);
+        if (col < 0) return;
+        auto rids = ct.scanAll();
+        for (auto it = rids.rbegin(); it != rids.rend(); ++it) {
+            auto rec = ct.read(*it);
+            if (rec && valuesEqual(rec->values[col], parentKeyVal)) {
+                ct.erase(*it);
+            }
+        }
+        ct.close();
+    } catch (...) {}
+}
+
+static void cascadeUpdateChildren(const QString& basePathOfThis,
+                                  const Relation& rel,
+                                  const ma::Value& oldParentKey,
+                                  const ma::Value& newParentKey) {
+    try {
+        const QString pd    = projectDirFromBase(basePathOfThis);
+        const QString cbase = basePathForTableName(pd, rel.childName);
+        ma::Table ct; ct.open(cbase.toStdString());
+        const auto cs = ct.getSchema();
+        const int col = fieldIndexByName(cs, rel.childField);
+        if (col < 0) return;
+        auto rids = ct.scanAll();
+        for (const auto& rid : rids) {
+            auto rec = ct.read(rid);
+            if (rec && valuesEqual(rec->values[col], oldParentKey)) {
+                rec->values[col] = newParentKey;
+                ct.update(rid, *rec);
+            }
+        }
+        ct.close();
+    } catch (...) {}
+}
+
+static QString pkSidecarPath(const QString& basePath) {
+    return basePath + ".keys.json";
+}
+
+static QString relationsPathForProject(const QString& basePath) {
+    return QDir(projectDirFromBase(basePath)).filePath("relations.json");
+}
 
 static inline void setUtf8(QTextStream& ts) {
     #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
@@ -147,22 +310,24 @@ Value TableModel::fromVariant(int col, const QVariant& qv) const {
 }
 
 QVariant TableModel::data(const QModelIndex& idx, int role) const {
-    if (!idx.isValid()) return {};
+    if (!idx.isValid() || !table_) return {};
+
     const int row = idx.row();
     const int col = idx.column();
+    if (row < 0 || row >= static_cast<int>(cache_.size())) return {};
+    if (col < 0 || col >= static_cast<int>(schema_.fields.size())) return {};
+
     const auto& f = schema_.fields[col];
     const auto& opt = cache_[row].values[col];
 
     if (f.type == ma::FieldType::Bool) {
         if (role == Qt::CheckStateRole) {
-            if (!opt.has_value()) return Qt::Unchecked;
-            const ma::Value& v = opt.value();
-            bool b = false;
-            if (std::holds_alternative<bool>(v)) b = std::get<bool>(v);
-            else if (std::holds_alternative<int>(v)) b = (std::get<int>(v) != 0);
+            const bool b = (opt.has_value() ? std::get<bool>(opt.value()) : false);
             return b ? Qt::Checked : Qt::Unchecked;
         }
-        if (role == Qt::DisplayRole || role == Qt::EditRole) return {};
+        if (role == Qt::DisplayRole || role == Qt::EditRole) {
+            return {};
+        }
         return {};
     }
 
@@ -177,7 +342,6 @@ QVariant TableModel::data(const QModelIndex& idx, int role) const {
             else if (std::holds_alternative<int>(v)) d = static_cast<double>(std::get<int>(v));
             else if (std::holds_alternative<long long>(v)) d = static_cast<double>(std::get<long long>(v));
 
-            // símbolo según formato
             QString sym;
             if (f.size == ma::FMT_CUR_LPS)      sym = "L ";
             else if (f.size == ma::FMT_CUR_USD) sym = "$ ";
@@ -233,18 +397,19 @@ QVariant TableModel::data(const QModelIndex& idx, int role) const {
 }
 
 Qt::ItemFlags TableModel::flags(const QModelIndex& idx) const {
-    Qt::ItemFlags fl = QAbstractTableModel::flags(idx);
-    if (!idx.isValid()) return fl;
+    if (!idx.isValid()) return Qt::NoItemFlags;
 
-    const auto& f = schema_.fields[idx.column()];
+    Qt::ItemFlags fl = Qt::ItemIsSelectable | Qt::ItemIsEnabled;
 
-    if (f.type == ma::FieldType::Bool) {
-        fl |=  Qt::ItemIsUserCheckable | Qt::ItemIsEnabled | Qt::ItemIsSelectable;
-        fl &= ~Qt::ItemIsEditable;
-        return fl;
+    const int col = idx.column();
+    if (col >= 0 && col < static_cast<int>(schema_.fields.size())) {
+        const auto& f = schema_.fields[col];
+        if (f.type == ma::FieldType::Bool) {
+            fl |= Qt::ItemIsUserCheckable;
+        } else {
+            fl |= Qt::ItemIsEditable;
+        }
     }
-
-    fl |= Qt::ItemIsEditable | Qt::ItemIsEnabled | Qt::ItemIsSelectable;
     return fl;
 }
 
@@ -320,69 +485,165 @@ bool TableModel::setData(const QModelIndex& idx, const QVariant& v, int role) {
     const auto& f = schema_.fields[col];
 
     if (f.type == ma::FieldType::Bool && role == Qt::CheckStateRole) {
+        const bool newB = (v.toInt() == Qt::Checked);
+
         ma::Record rec = cache_[row];
-        const bool b = (v.toInt() == Qt::Checked);
-        rec.values[col] = b;
+        rec.values[col] = newB;
 
-        auto rid2 = table_->update(rids_[row], rec);
-        if (!rid2) return false;
+        auto maybeNewRid = table_->update(rids_[row], rec);
+        if (!maybeNewRid) return false;
 
-        rids_[row]  = *rid2;
+        rids_[row]  = *maybeNewRid;
         cache_[row] = rec;
 
-        emit dataChanged(idx, idx, {Qt::DisplayRole, Qt::CheckStateRole, Qt::EditRole});
+        emit dataChanged(idx, idx, {Qt::CheckStateRole, Qt::DisplayRole});
+        saveOrder();
         return true;
     }
 
     if (role != Qt::EditRole) return false;
 
-    bool isNull = false;
-    ma::Value coerced;
-    if ((v.typeId() == QMetaType::QString && v.toString().trimmed().isEmpty()) || !v.isValid()) {
-        isNull = true;
-    } else {
-        if (!coerceValueForField(f, v, coerced)) {
-            return false;
+    ma::Value newVal = fromVariant(col, v);
+    const bool setNull =
+        (v.typeId() == QMetaType::QString && v.toString().trimmed().isEmpty()) || !v.isValid();
+
+    const QString pkName = loadPrimaryKeyNameForBase(basePath_);
+    const int pkCol = pkName.isEmpty() ? -1 : fieldIndexByName(schema_, pkName);
+    const bool editingPK = (col == pkCol);
+
+    if (editingPK) {
+        if (setNull) return false;
+        if (!pkWouldBeUnique(pkCol, std::optional<ma::Value>(newVal), row)) return false;
+    }
+
+    for (const auto& rel : relationsWhereBaseIsChild(basePath_)) {
+        const int fkCol = fieldIndexByName(schema_, rel.childField);
+        if (fkCol == col) {
+            if (setNull) return false;
+            if (!valueExistsInParent(basePath_, rel, newVal)) return false;
         }
     }
 
+    std::optional<ma::Value> oldPkVal;
+    if (editingPK) oldPkVal = cache_[row].values[pkCol];
+
     ma::Record rec = cache_[row];
-    if (isNull) rec.values[col].reset();
-    else        rec.values[col] = coerced;
+    if (setNull) rec.values[col].reset();
+    else         rec.values[col] = newVal;
 
     auto maybeNewRid = table_->update(rids_[row], rec);
     if (!maybeNewRid) return false;
 
     rids_[row]  = *maybeNewRid;
     cache_[row] = rec;
-    saveOrder();
+
+    if (editingPK && oldPkVal.has_value()) {
+        for (const auto& rel : relationsWhereBaseIsParent(basePath_)) {
+            if (rel.parentField.compare(pkName, Qt::CaseInsensitive) == 0) {
+                if (rel.cascadeUpdate) {
+                    cascadeUpdateChildren(basePath_, rel, oldPkVal.value(), newVal);
+                } else {
+                    bool hasChild = false;
+                    try {
+                        const QString pd    = projectDirFromBase(basePath_);
+                        const QString cbase = basePathForTableName(pd, rel.childName);
+                        ma::Table ct; ct.open(cbase.toStdString());
+                        const int cCol = fieldIndexByName(ct.getSchema(), rel.childField);
+                        for (const auto& crid : ct.scanAll()) {
+                            auto childRec = ct.read(crid);
+                            if (childRec && valuesEqual(childRec->values[cCol], oldPkVal)) {
+                                hasChild = true; break;
+                            }
+                        }
+                        ct.close();
+                    } catch (...) {}
+
+                    if (hasChild) {
+                        ma::Record revert = cache_[row];
+                        revert.values[pkCol] = oldPkVal;
+                        table_->update(rids_[row], revert);
+                        cache_[row] = revert;
+                        emit dataChanged(idx, idx, {Qt::DisplayRole, Qt::EditRole});
+                        return false;
+                    }
+                }
+            }
+        }
+    }
 
     emit dataChanged(idx, idx, {Qt::DisplayRole, Qt::EditRole});
+    saveOrder();
     return true;
 }
 
-bool TableModel::insertRows(int, int count, const QModelIndex&) {
-    if (count<=0) return false;
+bool TableModel::insertRows(int row, int count, const QModelIndex& parent) {
+    Q_UNUSED(parent);
+    if (!table_ || count <= 0) return false;
+
     beginInsertRows(QModelIndex(), rowCount(), rowCount()+count-1);
-    for (int i=0;i<count;i++) {
-        Record rec = makeDefaultRecord();
-        RID rid = table_->insert(rec);
+
+    for (int i=0; i<count; ++i) {
+        ma::Record rec = makeDefaultRecord();
+        auto rid = table_->insert(rec);
         rids_.push_back(rid);
         cache_.push_back(rec);
     }
-    saveOrder();
+
     endInsertRows();
+    saveOrder();
     return true;
 }
 
-bool TableModel::removeRows(int row, int count, const QModelIndex&) {
-    if (count<=0 || row<0 || row+count>rowCount()) return false;
+bool TableModel::removeRows(int row, int count, const QModelIndex& parent) {
+    Q_UNUSED(parent);
+    if (!table_ || row < 0 || count <= 0 || row+count > (int)rids_.size()) return false;
+
+    const QString pkName = loadPrimaryKeyNameForBase(basePath_);
+    const int pkCol = pkName.isEmpty() ? -1 : fieldIndexByName(schema_, pkName);
+
     beginRemoveRows(QModelIndex(), row, row+count-1);
-    for (int i=0;i<count;i++) table_->erase(rids_[row+i]);
-    rids_.erase(rids_.begin()+row, rids_.begin()+row+count);
-    cache_.erase(cache_.begin()+row, cache_.begin()+row+count);
-    saveOrder();
+
+    for (int i=0; i<count; ++i) {
+        const int r = row + (count-1-i);
+        const auto rid = rids_[r];
+        const auto rec = cache_[r];
+
+        if (pkCol >= 0) {
+            const auto& pkVal = rec.values[pkCol];
+            for (const auto& rel : relationsWhereBaseIsParent(basePath_)) {
+                if (rel.parentField.compare(pkName, Qt::CaseInsensitive)==0) {
+                    bool hasChild = false;
+                    try {
+                        const QString pd    = projectDirFromBase(basePath_);
+                        const QString cbase = basePathForTableName(pd, rel.childName);
+                        ma::Table ct; ct.open(cbase.toStdString());
+                        const int cCol = fieldIndexByName(ct.getSchema(), rel.childField);
+                        for (const auto& crid : ct.scanAll()) {
+                            auto childRec = ct.read(crid);
+                            if (childRec && valuesEqual(childRec->values[cCol], pkVal)) { hasChild = true; break; }
+                        }
+                        ct.close();
+                    } catch (...) {}
+
+                    if (hasChild) {
+                        if (rel.cascadeDelete) {
+                            cascadeDeleteChildren(basePath_, rel, pkVal.value());
+                        } else {
+                            endRemoveRows();
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+
+        table_->erase(rid);
+        rids_.erase(rids_.begin() + r);
+        cache_.erase(cache_.begin() + r);
+    }
+
     endRemoveRows();
+    saveOrder();
     return true;
 }
 
@@ -482,4 +743,21 @@ void TableModel::rebuildCacheFromRids() {
         auto rec = table_->read(rid);
         cache_.push_back(rec.value_or(Record::withFieldCount((int)schema_.fields.size())));
     }
+}
+
+QString TableModel::loadPrimaryKeyNameForThisTable() const {
+    const QString fn = pkSidecarPath(basePath_);
+    QFile f(fn);
+    if (!f.exists() || !f.open(QIODevice::ReadOnly)) return {};
+    const auto doc = QJsonDocument::fromJson(f.readAll());
+    return doc.object().value("primaryKey").toString();
+}
+
+bool TableModel::pkWouldBeUnique(int pkCol, const std::optional<ma::Value>& candidate, int skipRow) const {
+    if (pkCol < 0) return true;
+    for (int r=0; r<(int)cache_.size(); ++r) {
+        if (r == skipRow) continue;
+        if (valuesEqual(cache_[r].values[pkCol], candidate)) return false;
+    }
+    return true;
 }

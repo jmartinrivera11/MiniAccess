@@ -6,39 +6,50 @@
 #include <QKeyEvent>
 #include <QStyle>
 #include <QStyleOptionButton>
-#include <QAbstractItemModel>
 
-void BoolCheckDelegate::paint(QPainter* p, const QStyleOptionViewItem& opt, const QModelIndex& idx) const {
-    QStyleOptionViewItem base(opt);
-    base.text.clear();
-    QStyledItemDelegate::paint(p, base, idx);
+static QRect indicatorRect(const QStyleOptionViewItem& opt) {
+    QStyleOptionButton cbOpt;
+    cbOpt.rect = opt.rect;
+    cbOpt.state = QStyle::State_Enabled;
+    QStyle* st = opt.widget ? opt.widget->style() : QApplication::style();
+    return st->subElementRect(QStyle::SE_CheckBoxIndicator, &cbOpt, opt.widget);
+}
 
-    QStyleOptionButton cb;
-    cb.state = QStyle::State_Enabled;
-    if (opt.state & QStyle::State_Selected) cb.state |= QStyle::State_On;
+void BoolCheckDelegate::paint(QPainter* p,
+                              const QStyleOptionViewItem& opt,
+                              const QModelIndex& idx) const {
+    QStyledItemDelegate::paint(p, opt, idx);
 
-    const int st = idx.data(Qt::CheckStateRole).toInt();
-    cb.state &= ~QStyle::State_On;
-    cb.state &= ~QStyle::State_Off;
-    cb.state |= (st == Qt::Checked) ? QStyle::State_On : QStyle::State_Off;
+    QStyle* st = opt.widget ? opt.widget->style() : QApplication::style();
 
-    const int w = QApplication::style()->pixelMetric(QStyle::PM_IndicatorWidth, nullptr, nullptr);
-    const QSize ind(w, w);
-    cb.rect = QStyle::alignedRect(opt.direction, Qt::AlignCenter, ind, opt.rect);
+    QStyleOptionButton cbOpt;
+    cbOpt.state = QStyle::State_Enabled;
+    const int stRole = idx.data(Qt::CheckStateRole).toInt();
+    cbOpt.state |= (stRole == Qt::Checked) ? QStyle::State_On : QStyle::State_Off;
+    cbOpt.rect = indicatorRect(opt);
 
-    QApplication::style()->drawControl(QStyle::CE_CheckBox, &cb, p, nullptr);
+    st->drawControl(QStyle::CE_CheckBox, &cbOpt, p, opt.widget);
 }
 
 bool BoolCheckDelegate::editorEvent(QEvent* ev,
                                     QAbstractItemModel* model,
-                                    const QStyleOptionViewItem&,
+                                    const QStyleOptionViewItem& opt,
                                     const QModelIndex& idx) {
-    if (!(idx.flags() & Qt::ItemIsUserCheckable)) return false;
+    if (!(idx.flags() & Qt::ItemIsUserCheckable) || !idx.isValid())
+        return false;
 
-    if (ev->type() == QEvent::MouseButtonRelease) {
+    if (ev->type() == QEvent::MouseButtonPress || ev->type() == QEvent::MouseButtonRelease) {
         auto* me = static_cast<QMouseEvent*>(ev);
         if (me->button() != Qt::LeftButton) return false;
 
+        if (!opt.rect.contains(me->pos())) return false;
+
+        Qt::CheckState st = static_cast<Qt::CheckState>(idx.data(Qt::CheckStateRole).toInt());
+        st = (st == Qt::Checked ? Qt::Unchecked : Qt::Checked);
+        return model->setData(idx, st, Qt::CheckStateRole);
+    }
+
+    if (ev->type() == QEvent::MouseButtonDblClick) {
         Qt::CheckState st = static_cast<Qt::CheckState>(idx.data(Qt::CheckStateRole).toInt());
         st = (st == Qt::Checked ? Qt::Unchecked : Qt::Checked);
         return model->setData(idx, st, Qt::CheckStateRole);
@@ -52,6 +63,5 @@ bool BoolCheckDelegate::editorEvent(QEvent* ev,
             return model->setData(idx, st, Qt::CheckStateRole);
         }
     }
-
     return false;
 }

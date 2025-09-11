@@ -57,6 +57,8 @@ private:
     void redrawAllLinks();
     QPointF fieldAnchor(const QString& table, const QString& field) const;
     QString jsonPath() const;
+    void loadRelations();
+    void saveRelations();
 
 private:
     QString projectDir_;
