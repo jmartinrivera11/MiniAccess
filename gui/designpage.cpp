@@ -567,7 +567,7 @@ void DesignPage::saveDesign() {
     if (!exists) {
         try {
             ma::Table t; t.create(base.toStdString(), newS);
-            banner_->setText("Design saved (new table created).");
+            banner_->setText("Design saved");
             banner_->show();
         } catch (const std::exception& ex) {
             banner_->setText(QString("Error creating table: %1").arg(ex.what()));
@@ -591,7 +591,7 @@ void DesignPage::saveDesign() {
     if (rowCount == 0) {
         try {
             ma::Table t; t.create(base.toStdString(), newS);
-            banner_->setText("Design saved (empty table recreated).");
+            banner_->setText("Design saved");
             banner_->show();
             return;
         } catch (const std::exception& ex) {
@@ -644,7 +644,7 @@ void DesignPage::saveDesign() {
         }
 
         if (!QFile::remove(mad) || !QFile::remove(meta)) {
-            banner_->setText("Close any open Datasheet for this table and try Save again.");
+            banner_->setText("Close any open datasheet");
             banner_->show();
             QFile::remove(tmpMeta);
             QFile::remove(tmpMad);
@@ -659,7 +659,7 @@ void DesignPage::saveDesign() {
             return;
         }
 
-        banner_->setText("Design saved. Data migrated to new schema. Indexes were removed; recreate if needed.");
+        banner_->setText("Design saved");
         banner_->show();
 
     } catch (const std::exception& ex) {
