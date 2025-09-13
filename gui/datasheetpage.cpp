@@ -6,9 +6,8 @@
 #include <QLabel>
 #include "../core/Table.h"
 #include "TableModel.h"
-#include "../core/DisplayFmt.h"
-#include "delegates/DateTimeDelegate.h"
 #include "boolcheckdelegate.h"
+#include "formatdelegate.h"
 #include <QAbstractItemView>
 #include <QCoreApplication>
 
@@ -30,14 +29,11 @@ DatasheetPage::DatasheetPage(const QString& basePath, QWidget* parent)
     zoom_ = 1.0;
     applyZoom();
 
+    view_->setItemDelegate(new FormatDelegate(table_->getSchema(), view_));
+
     const auto& s = table_->getSchema();
     for (int c = 0; c < (int)s.fields.size(); ++c) {
-        const auto& f = s.fields[c];
-        if (f.type == FieldType::String && isDateTimeFmt(f.size)) {
-            view_->setItemDelegateForColumn(c, new DateTimeDelegate(view_));
-            view_->setColumnWidth(c, 160);
-        }
-        if (f.type == ma::FieldType::Bool) {
+        if (s.fields[c].type == ma::FieldType::Bool) {
             view_->setItemDelegateForColumn(c, new BoolCheckDelegate(view_));
         }
     }

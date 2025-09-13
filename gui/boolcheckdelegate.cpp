@@ -1,66 +1,59 @@
 #include "BoolCheckDelegate.h"
-
-#include <QApplication>
 #include <QPainter>
 #include <QMouseEvent>
 #include <QKeyEvent>
-#include <QStyle>
-#include <QStyleOptionButton>
 
-static QRect indicatorRect(const QStyleOptionViewItem& opt) {
-    QStyleOptionButton cbOpt;
-    cbOpt.rect = opt.rect;
-    cbOpt.state = QStyle::State_Enabled;
-    QStyle* st = opt.widget ? opt.widget->style() : QApplication::style();
-    return st->subElementRect(QStyle::SE_CheckBoxIndicator, &cbOpt, opt.widget);
-}
+static inline QColor onBg()  { return QColor(15, 143, 102); }
+static inline QColor offBg() { return QColor(230, 230, 230); }
+static inline QColor border(){ return QColor(170, 170, 170); }
 
-void BoolCheckDelegate::paint(QPainter* p,
-                              const QStyleOptionViewItem& opt,
+void BoolCheckDelegate::paint(QPainter* p, const QStyleOptionViewItem& opt,
                               const QModelIndex& idx) const {
-    QStyledItemDelegate::paint(p, opt, idx);
+    const bool checked = (idx.data(Qt::CheckStateRole).toInt() == Qt::Checked);
 
-    QStyle* st = opt.widget ? opt.widget->style() : QApplication::style();
+    QRect r = opt.rect;
+    const int sz = qMin(r.width(), r.height());
+    QRect box = QRect(0,0, sz-8, sz-8);
+    box.moveCenter(r.center());
 
-    QStyleOptionButton cbOpt;
-    cbOpt.state = QStyle::State_Enabled;
-    const int stRole = idx.data(Qt::CheckStateRole).toInt();
-    cbOpt.state |= (stRole == Qt::Checked) ? QStyle::State_On : QStyle::State_Off;
-    cbOpt.rect = indicatorRect(opt);
+    p->save();
+    p->setRenderHint(QPainter::Antialiasing, true);
 
-    st->drawControl(QStyle::CE_CheckBox, &cbOpt, p, opt.widget);
+    p->setPen(border());
+    p->setBrush(checked ? onBg() : offBg());
+    p->drawRoundedRect(box, 4, 4);
+
+    if (checked) {
+        p->setPen(QPen(Qt::white, 2.0));
+        const int m = 6;
+        QPoint a(box.left() + m,              box.center().y());
+        QPoint b(box.center().x() - m/2,      box.bottom() - m);
+        QPoint c(box.right() - m,             box.top() + m);
+        p->drawLine(a, b);
+        p->drawLine(b, c);
+    }
+
+    p->restore();
 }
 
-bool BoolCheckDelegate::editorEvent(QEvent* ev,
-                                    QAbstractItemModel* model,
+bool BoolCheckDelegate::editorEvent(QEvent* ev, QAbstractItemModel* model,
                                     const QStyleOptionViewItem& opt,
                                     const QModelIndex& idx) {
-    if (!(idx.flags() & Qt::ItemIsUserCheckable) || !idx.isValid())
-        return false;
+    if (!idx.flags().testFlag(Qt::ItemIsUserCheckable)) return false;
 
-    if (ev->type() == QEvent::MouseButtonPress || ev->type() == QEvent::MouseButtonRelease) {
+    if (ev->type()==QEvent::MouseButtonRelease) {
         auto* me = static_cast<QMouseEvent*>(ev);
-        if (me->button() != Qt::LeftButton) return false;
-
-        if (!opt.rect.contains(me->pos())) return false;
-
-        Qt::CheckState st = static_cast<Qt::CheckState>(idx.data(Qt::CheckStateRole).toInt());
-        st = (st == Qt::Checked ? Qt::Unchecked : Qt::Checked);
-        return model->setData(idx, st, Qt::CheckStateRole);
-    }
-
-    if (ev->type() == QEvent::MouseButtonDblClick) {
-        Qt::CheckState st = static_cast<Qt::CheckState>(idx.data(Qt::CheckStateRole).toInt());
-        st = (st == Qt::Checked ? Qt::Unchecked : Qt::Checked);
-        return model->setData(idx, st, Qt::CheckStateRole);
-    }
-
-    if (ev->type() == QEvent::KeyPress) {
-        auto* ke = static_cast<QKeyEvent*>(ev);
-        if (ke->key() == Qt::Key_Space) {
-            Qt::CheckState st = static_cast<Qt::CheckState>(idx.data(Qt::CheckStateRole).toInt());
-            st = (st == Qt::Checked ? Qt::Unchecked : Qt::Checked);
-            return model->setData(idx, st, Qt::CheckStateRole);
+        if (opt.rect.contains(me->pos())) {
+            const int cur = idx.data(Qt::CheckStateRole).toInt();
+            const int next = (cur==Qt::Checked) ? Qt::Unchecked : Qt::Checked;
+            return model->setData(idx, next, Qt::CheckStateRole);
+        }
+    } else if (ev->type()==QEvent::KeyPress) {
+        const auto key = static_cast<QKeyEvent*>(ev)->key();
+        if (key==Qt::Key_Space || key==Qt::Key_Return || key==Qt::Key_Enter) {
+            const int cur = idx.data(Qt::CheckStateRole).toInt();
+            const int next = (cur==Qt::Checked) ? Qt::Unchecked : Qt::Checked;
+            return model->setData(idx, next, Qt::CheckStateRole);
         }
     }
     return false;

@@ -301,7 +301,6 @@ void RelationDesignerPage::saveToJson() {
     }
     root["nodes"] = jnodes;
 
-    // relations
     QJsonArray jrels;
     for (const auto& r : relations_) {
         QJsonObject jr;

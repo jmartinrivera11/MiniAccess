@@ -325,9 +325,7 @@ QVariant TableModel::data(const QModelIndex& idx, int role) const {
             const bool b = (opt.has_value() ? std::get<bool>(opt.value()) : false);
             return b ? Qt::Checked : Qt::Unchecked;
         }
-        if (role == Qt::DisplayRole || role == Qt::EditRole) {
-            return {};
-        }
+        if (role == Qt::DisplayRole || role == Qt::EditRole) return {};
         return {};
     }
 
@@ -398,7 +396,6 @@ QVariant TableModel::data(const QModelIndex& idx, int role) const {
 
 Qt::ItemFlags TableModel::flags(const QModelIndex& idx) const {
     if (!idx.isValid()) return Qt::NoItemFlags;
-
     Qt::ItemFlags fl = Qt::ItemIsSelectable | Qt::ItemIsEnabled;
 
     const int col = idx.column();
@@ -521,6 +518,37 @@ bool TableModel::setData(const QModelIndex& idx, const QVariant& v, int role) {
         if (fkCol == col) {
             if (setNull) return false;
             if (!valueExistsInParent(basePath_, rel, newVal)) return false;
+        }
+    }
+
+    if (!setNull) {
+        if (f.type == ma::FieldType::Double) {
+            int decimals = 2;
+            if (!ma::isCurrencyFmt(f.size)) {
+                decimals = qBound(0, static_cast<int>(f.size), 19);
+            }
+            if (std::holds_alternative<double>(newVal)) {
+                double d = std::get<double>(newVal);
+                const double scale = std::pow(10.0, static_cast<double>(decimals));
+                d = std::round(d * scale) / scale;
+                newVal = d;
+            }
+        }
+
+        if (f.type == ma::FieldType::String && !ma::isDateTimeFmt(f.size) && f.size > 0) {
+            if (std::holds_alternative<std::string>(newVal)) {
+                auto s = std::get<std::string>(newVal);
+                if (s.size() > f.size) s.resize(f.size);
+                newVal = s;
+            }
+        }
+
+        if (f.type == ma::FieldType::CharN && f.size > 0) {
+            if (std::holds_alternative<std::string>(newVal)) {
+                auto s = std::get<std::string>(newVal);
+                if (s.size() > f.size) s.resize(f.size);
+                newVal = s;
+            }
         }
     }
 
