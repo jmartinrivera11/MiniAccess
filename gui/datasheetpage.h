@@ -25,8 +25,12 @@ public slots:
     void setZoom(double factor);
     double zoom() const { return zoom_; }
     void prepareForClose();
+    void onHeaderContextMenu(const QPoint& pos);
+    void setPrimaryKeyColumn(int logicalCol);
+    void clearPrimaryKey();
 
 private:
+    void refreshPkBadge();
     void setupUi();
     QString basePath_;
     std::unique_ptr<ma::Table> table_;

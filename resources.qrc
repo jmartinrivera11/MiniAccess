@@ -20,5 +20,6 @@
         <file>icons/zoom-out.svg</file>
         <file>icons/zoom-reset.svg</file>
         <file>icons/close.svg</file>
+        <file>icons/pk.svg</file>
     </qresource>
 </RCC>

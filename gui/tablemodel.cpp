@@ -231,7 +231,19 @@ int TableModel::rowCount(const QModelIndex&) const { return (int)rids_.size(); }
 int TableModel::columnCount(const QModelIndex&) const { return (int)schema_.fields.size(); }
 
 QVariant TableModel::headerData(int section, Qt::Orientation o, int role) const {
+    if (o == Qt::Horizontal && role == Qt::DecorationRole) {
+        if (!pkName_.isEmpty()) {
+            const auto& f = schema_.fields[section];
+            const QString name = QString::fromStdString(f.name);
+            if (name.compare(pkName_, Qt::CaseInsensitive) == 0) {
+                return QIcon(":/icons/icons/pk.svg");
+            }
+        }
+        return {};
+    }
+
     if (role != Qt::DisplayRole) return {};
+
     if (o == Qt::Horizontal) {
         const auto& f = schema_.fields[section];
         QString name = QString::fromStdString(f.name);
@@ -256,7 +268,7 @@ QVariant TableModel::headerData(int section, Qt::Orientation o, int role) const 
             }
             if (!d.isEmpty()) name += " (" + d + ")";
         } else if (f.type == FieldType::Int32 && isNumberSubtype(f.size)) {
-            QString nm = (f.size == FMT_NUM_BYTE)  ? "Byte" :
+            QString nm = (f.size == FMT_NUM_BYTE)  ? "Byte"  :
                              (f.size == FMT_NUM_INT16) ? "Int16" :
                              (f.size == FMT_NUM_INT32) ? "Int32" : "";
             if (!nm.isEmpty()) name += " (" + nm + ")";
@@ -267,6 +279,7 @@ QVariant TableModel::headerData(int section, Qt::Orientation o, int role) const 
         }
         return name;
     }
+
     return section + 1;
 }
 
@@ -286,26 +299,42 @@ QVariant TableModel::toVariant(const std::optional<Value>& ov) const {
 }
 
 Value TableModel::fromVariant(int col, const QVariant& qv) const {
-    auto t = schema_.fields[col].type;
-    switch (t) {
-    case FieldType::Int32:  return (int32_t)qv.toInt();
-    case FieldType::Double: return qv.toDouble();
+    const auto& f = schema_.fields[col];
+
+    switch (f.type) {
+    case FieldType::Int32:
+        return static_cast<int32_t>(qv.toInt());
+
+    case FieldType::Double:
+        return qv.toDouble();
+
     case FieldType::Bool: {
-        const auto s = qv.toString();
-        bool b = (s.compare("true", Qt::CaseInsensitive) == 0)
-                 || (s.compare("yes",  Qt::CaseInsensitive) == 0)
-                 || (s.compare("on",   Qt::CaseInsensitive) == 0)
-                 || (qv.toInt() != 0);
+        const QString s = qv.toString();
+        const bool b = (s.compare("true", Qt::CaseInsensitive) == 0)
+                       || (s.compare("yes",  Qt::CaseInsensitive) == 0)
+                       || (s.compare("on",   Qt::CaseInsensitive) == 0)
+                       || (qv.toInt() != 0);
         return b;
     }
-    case FieldType::String: return qv.toString().toStdString();
+
     case FieldType::CharN: {
         std::string s = qv.toString().toStdString();
-        uint16_t N = schema_.fields[col].size;
-        if (N>0 && s.size()>N) s.resize(N);
+        uint16_t N = f.size;
+        if (N > 0 && s.size() > N) s.resize(N);
         return s;
     }
-    default: return std::string();
+
+    case FieldType::String: {
+        QString s = qv.toString();
+        if (!ma::isDateTimeFmt(f.size)) {
+            const int N = static_cast<int>(f.size);
+            if (N > 0 && s.size() > N) s.truncate(N);
+        }
+        return s.toStdString();
+    }
+
+    default:
+        return std::string();
     }
 }
 
@@ -788,4 +817,50 @@ bool TableModel::pkWouldBeUnique(int pkCol, const std::optional<ma::Value>& cand
         if (valuesEqual(cache_[r].values[pkCol], candidate)) return false;
     }
     return true;
+}
+
+bool TableModel::columnIsUniqueNonNull(int col) const {
+    if (col < 0 || col >= (int)schema_.fields.size()) return false;
+    QSet<QString> seen;
+    for (const auto& rec : cache_) {
+        const auto& ov = rec.values[col];
+        if (!ov.has_value()) return false;
+        const ma::Value& v = ov.value();
+        QString key;
+        if (std::holds_alternative<int>(v))              key = QString("i:%1").arg(std::get<int>(v));
+        else if (std::holds_alternative<long long>(v))   key = QString("l:%1").arg((qlonglong)std::get<long long>(v));
+        else if (std::holds_alternative<double>(v))      key = QString("d:%1").arg(QString::number(std::get<double>(v), 'g', 17));
+        else if (std::holds_alternative<bool>(v))        key = QString("b:%1").arg(std::get<bool>(v) ? "1":"0");
+        else if (std::holds_alternative<std::string>(v)) key = QString::fromStdString("s:" + std::get<std::string>(v));
+        else                                              key = "null";
+
+        if (seen.contains(key)) return false;
+        seen.insert(key);
+    }
+    return true;
+}
+
+int TableModel::primaryKeyColumn() const {
+    const QString pkName = primaryKeyName();
+    if (pkName.isEmpty()) return -1;
+    for (int i = 0; i < (int)schema_.fields.size(); ++i) {
+        if (QString::fromStdString(schema_.fields[i].name)
+                .compare(pkName, Qt::CaseInsensitive) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+void TableModel::notifyPrimaryKeyChanged() {
+    emit headerDataChanged(Qt::Horizontal, 0, columnCount() - 1);
+}
+
+QString TableModel::primaryKeyName() const {
+    return pkName_;
+}
+
+void TableModel::setPrimaryKeyName(const QString& name) {
+    pkName_ = name;
+    emit headerDataChanged(Qt::Horizontal, 0, columnCount() - 1);
 }

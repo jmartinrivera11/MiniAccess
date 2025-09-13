@@ -19,6 +19,10 @@ public:
     bool insertRows(int row, int count, const QModelIndex& parent = QModelIndex()) override;
     bool removeRows(int row, int count, const QModelIndex& parent = QModelIndex()) override;
     void reload();
+    QString primaryKeyName() const;
+    bool columnIsUniqueNonNull(int col) const;
+    void notifyPrimaryKeyChanged();;
+    void setPrimaryKeyName(const QString& name);
 
 private:
     ma::Record makeDefaultRecord() const;
@@ -36,4 +40,6 @@ private:
     QString basePath_;
     QString loadPrimaryKeyNameForThisTable() const;
     bool pkWouldBeUnique(int pkCol, const std::optional<ma::Value>& candidate, int skipRow) const;
+    int primaryKeyColumn() const;
+    QString pkName_;
 };

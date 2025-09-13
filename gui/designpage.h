@@ -3,10 +3,8 @@
 #include "../core/Schema.h"
 
 class QTableWidget;
-class QTableWidgetItem;
 class QStackedWidget;
 class QLabel;
-class QCheckBox;
 
 class DesignPage : public QWidget {
     Q_OBJECT
@@ -20,11 +18,7 @@ private slots:
     void saveDesign();
     void onComboTypeChanged(const QString&);
 
-protected:
-    bool eventFilter(QObject* obj, QEvent* ev) override;
-
 private:
-    QCheckBox* pkBoxAt(int row) const;
     void setupUi();
     void loadSchema();
     void setSchema(const ma::Schema& s);
@@ -36,6 +30,4 @@ private:
     QTableWidget*  grid_{nullptr};
     QStackedWidget* props_{nullptr};
     QLabel*        banner_{nullptr};
-    QString loadPrimaryKeyName() const;
-    bool savePrimaryKeyName(const QString& pkName) const;
 };

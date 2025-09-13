@@ -27,55 +27,18 @@
 
 using namespace ma;
 
-static QString pkSidecarPath(const QString& basePath) {
-    return basePath + ".keys.json";
-}
-
-static QString coreToTypeName(const ma::Field& f) {
-    using namespace ma;
-    if (f.type==FieldType::Double && ma::isCurrencyFmt(f.size)) return "Currency";
-    if (f.type==FieldType::String && ma::isDateTimeFmt(f.size)) return "Date/Time";
-    switch (f.type) {
-    case FieldType::String: return "Short Text";
-    case FieldType::Int32:  return "Number";
-    case FieldType::Bool:   return "Yes/No";
-    case FieldType::Double: return "Double";
-    case FieldType::CharN:  return "CharN";
-    default: return "Short Text";
-    }
-}
-
-static QString loadPrimaryKeyNameForBase(const QString& basePath) {
-    QFile f(pkSidecarPath(basePath));
-    if (!f.exists() || !f.open(QIODevice::ReadOnly)) return {};
-    const auto doc = QJsonDocument::fromJson(f.readAll());
-    return doc.object().value("primaryKey").toString();
-}
-
-static bool savePrimaryKeyNameForBase(const QString& basePath, const QString& pkName) {
-    QFile f(pkSidecarPath(basePath));
-    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return false;
-    QJsonObject o; o["primaryKey"] = pkName;
-    QJsonDocument doc(o);
-    f.write(doc.toJson(QJsonDocument::Indented));
-    f.close();
-    return true;
-}
-
 static QComboBox* typeComboAt(QTableWidget* grid, int row) {
     return qobject_cast<QComboBox*>(grid->cellWidget(row, 2));
 }
+
 static QWidget* fmtWidgetAt(QTableWidget* grid, int row) {
     return grid->cellWidget(row, 3);
 }
-static QCheckBox* pkCheckAt(QTableWidget* grid, int row) {
-    return qobject_cast<QCheckBox*>(grid->cellWidget(row, 0));
-}
 
 static void fillFormatEditor(QTableWidget* grid, int row, const QString& typeName) {
-    if (auto* old = grid->cellWidget(row, 3)) {
+    if (auto* old = grid->cellWidget(row, 2)) {
         old->deleteLater();
-        grid->setCellWidget(row, 3, nullptr);
+        grid->setCellWidget(row, 2, nullptr);
     }
 
     if (typeName=="Yes/No") {
@@ -83,21 +46,21 @@ static void fillFormatEditor(QTableWidget* grid, int row, const QString& typeNam
         cb->addItem("True/False",  FMT_BOOL_TRUEFALSE);
         cb->addItem("Yes/No",      FMT_BOOL_YESNO);
         cb->addItem("On/Off",      FMT_BOOL_ONOFF);
-        grid->setCellWidget(row, 3, cb);
+        grid->setCellWidget(row, 2, cb);
         cb->setCurrentIndex(0);
     } else if (typeName=="Currency") {
         auto* cb = new QComboBox(grid);
         cb->addItem("Lps",  FMT_CUR_LPS);
         cb->addItem("USD",  FMT_CUR_USD);
         cb->addItem("EUR",  FMT_CUR_EUR);
-        grid->setCellWidget(row, 3, cb);
+        grid->setCellWidget(row, 2, cb);
         cb->setCurrentIndex(0);
     } else if (typeName=="Number") {
         auto* cb = new QComboBox(grid);
         cb->addItem("Byte",         FMT_NUM_BYTE);
         cb->addItem("Integer",      FMT_NUM_INT16);
         cb->addItem("Long Integer", FMT_NUM_INT32);
-        grid->setCellWidget(row, 3, cb);
+        grid->setCellWidget(row, 2, cb);
         cb->setCurrentIndex(2);
     } else if (typeName=="Date/Time") {
         auto* cb = new QComboBox(grid);
@@ -106,26 +69,29 @@ static void fillFormatEditor(QTableWidget* grid, int row, const QString& typeNam
         cb->addItem("Short Date",   FMT_DT_SHORTDATE);
         cb->addItem("Long Time",    FMT_DT_LONGTIME);
         cb->addItem("Short Time",   FMT_DT_SHORTTIME);
-        grid->setCellWidget(row, 3, cb);
+        grid->setCellWidget(row, 2, cb);
         cb->setCurrentIndex(0);
     } else if (typeName=="Double") {
         auto* sp = new QSpinBox(grid);
-        sp->setRange(0, 9);
+        sp->setRange(0, 19);
         sp->setValue(2);
         sp->setSuffix(" decimals");
-        grid->setCellWidget(row, 3, sp);
+        sp->setAccelerated(true);
+        grid->setCellWidget(row, 2, sp);
     } else if (typeName=="CharN") {
         auto* sp = new QSpinBox(grid);
         sp->setRange(1, 255);
         sp->setValue(16);
         sp->setSuffix(" chars");
-        grid->setCellWidget(row, 3, sp);
+        sp->setAccelerated(true);
+        grid->setCellWidget(row, 2, sp);
     } else {
         auto* sp = new QSpinBox(grid);
         sp->setRange(1, 255);
         sp->setValue(50);
         sp->setSuffix(" max");
-        grid->setCellWidget(row, 3, sp);
+        sp->setAccelerated(true);
+        grid->setCellWidget(row, 2, sp);
     }
 }
 
@@ -203,6 +169,41 @@ static uint16_t formatSizeFromWidget(QTableWidget* grid, int row, const QString&
             return static_cast<uint16_t>(std::clamp(sp->value(),1,255));
         return 50;
     }
+}
+
+static QString pkSidecarPath(const QString& basePath) {
+    return basePath + ".keys.json";
+}
+
+static QString coreToTypeName(const ma::Field& f) {
+    using namespace ma;
+    if (f.type==FieldType::Double && ma::isCurrencyFmt(f.size)) return "Currency";
+    if (f.type==FieldType::String && ma::isDateTimeFmt(f.size)) return "Date/Time";
+    switch (f.type) {
+    case FieldType::String: return "Short Text";
+    case FieldType::Int32:  return "Number";
+    case FieldType::Bool:   return "Yes/No";
+    case FieldType::Double: return "Double";
+    case FieldType::CharN:  return "CharN";
+    default: return "Short Text";
+    }
+}
+
+static QString loadPrimaryKeyNameForBase(const QString& basePath) {
+    QFile f(pkSidecarPath(basePath));
+    if (!f.exists() || !f.open(QIODevice::ReadOnly)) return {};
+    const auto doc = QJsonDocument::fromJson(f.readAll());
+    return doc.object().value("primaryKey").toString();
+}
+
+static bool savePrimaryKeyNameForBase(const QString& basePath, const QString& pkName) {
+    QFile f(pkSidecarPath(basePath));
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return false;
+    QJsonObject o; o["primaryKey"] = pkName;
+    QJsonDocument doc(o);
+    f.write(doc.toJson(QJsonDocument::Indented));
+    f.close();
+    return true;
 }
 
 static QStringList typeNames() {
@@ -321,23 +322,6 @@ static std::optional<ma::Value> convertValueForNewField(const ma::Field& newF,
 
 static QString pkFileForBase(const QString& basePath) { return basePath + ".keys.json"; }
 
-QString DesignPage::loadPrimaryKeyName() const {
-    QFile f(pkFileForBase(basePath_));
-    if (!f.exists() || !f.open(QIODevice::ReadOnly)) return {};
-    const auto doc = QJsonDocument::fromJson(f.readAll());
-    const auto obj = doc.object();
-    return obj.value("primaryKey").toString();
-}
-
-bool DesignPage::savePrimaryKeyName(const QString& pkName) const {
-    QJsonObject obj;
-    obj["primaryKey"] = pkName;
-    QFile f(pkFileForBase(basePath_));
-    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return false;
-    f.write(QJsonDocument(obj).toJson(QJsonDocument::Indented));
-    return true;
-}
-
 DesignPage::DesignPage(const QString& basePath, QWidget* parent)
     : QWidget(parent), basePath_(basePath) {
     setupUi();
@@ -353,16 +337,12 @@ void DesignPage::setupUi() {
     banner_->hide();
     lay->addWidget(banner_);
 
-    grid_ = new QTableWidget(0, 4, this);
-    grid_->setHorizontalHeaderLabels({"PK","Field Name","Data Type","Size/Format"});
+    grid_ = new QTableWidget(0, 3, this);
+    grid_->setHorizontalHeaderLabels({"Field Name","Data Type","Size/Format"});
     grid_->horizontalHeader()->setStretchLastSection(true);
     grid_->verticalHeader()->setVisible(false);
-    grid_->verticalHeader()->setDefaultSectionSize(28);
     grid_->setSelectionBehavior(QAbstractItemView::SelectRows);
     grid_->setEditTriggers(QAbstractItemView::AllEditTriggers);
-
-    grid_->viewport()->installEventFilter(this);
-
     lay->addWidget(grid_);
 
     props_ = new QStackedWidget(this);
@@ -384,14 +364,6 @@ void DesignPage::setupUi() {
     connect(bAdd,   &QPushButton::clicked, this, &DesignPage::addField);
     connect(bDel,   &QPushButton::clicked, this, &DesignPage::removeField);
     connect(bApply, &QPushButton::clicked, this, &DesignPage::saveDesign);
-
-    setStyleSheet(
-        "QCheckBox#pkBox::indicator { width:16px; height:16px; }"
-        "QCheckBox#pkBox::indicator:unchecked {"
-        "  border:2px solid #0f8f66; background:#eaf5f1; }"
-        "QCheckBox#pkBox::indicator:checked {"
-        "  border:2px solid #0f8f66; background:#0f8f66; }"
-        );
 }
 
 void DesignPage::loadSchema() {
@@ -406,77 +378,138 @@ void DesignPage::loadSchema() {
     }
 }
 
-void DesignPage::setSchema(const Schema& s) {
+void DesignPage::setSchema(const ma::Schema& s) {
+    using namespace ma;
     grid_->setRowCount(0);
-
-    QString pkName;
-    {
-        QFile f(basePath_ + ".keys.json");
-        if (f.open(QIODevice::ReadOnly)) {
-            const auto obj = QJsonDocument::fromJson(f.readAll()).object();
-            pkName = obj.value("primaryKey").toString();
-        }
-    }
 
     for (const auto& f : s.fields) {
         addField();
         const int r = grid_->rowCount() - 1;
 
-        if (auto* cb = pkBoxAt(r)) {
-            const bool isPk = (!pkName.isEmpty() && pkName == QString::fromStdString(f.name));
-            cb->setChecked(isPk);
-        }
+        grid_->item(r,0)->setText(QString::fromStdString(f.name));
 
-        grid_->item(r, 1)->setText(QString::fromStdString(f.name));
-
-        auto* combo = qobject_cast<QComboBox*>(grid_->cellWidget(r, 2));
+        auto* combo = qobject_cast<QComboBox*>(grid_->cellWidget(r,1));
         {
-            QSignalBlocker block(combo);
+            QSignalBlocker b(combo);
             combo->setCurrentText(coreToTypeName(f));
         }
 
-        fillFormatEditor(grid_, r, combo->currentText());
-        applyExistingFormatToEditor(grid_, r, f);
+        onTypeChanged(r);
+
+        QWidget* ed = grid_->cellWidget(r,2);
+        if (!ed) continue;
+
+        if (f.type == FieldType::CharN) {
+            if (auto* sp = qobject_cast<QSpinBox*>(ed)) {
+                sp->setValue(f.size > 0 ? f.size : 16);
+            }
+        } else if (f.type == FieldType::String && !ma::isDateTimeFmt(f.size)) {
+            if (auto* sp = qobject_cast<QSpinBox*>(ed)) {
+                sp->setValue(f.size > 0 ? f.size : 50);
+            }
+        } else if (f.type == FieldType::Double && ma::isCurrencyFmt(f.size)) {
+            if (auto* cb = qobject_cast<QComboBox*>(ed)) {
+                int idx = cb->findData(static_cast<int>(f.size));
+                if (idx >= 0) cb->setCurrentIndex(idx);
+            }
+        } else if (f.type == FieldType::String && ma::isDateTimeFmt(f.size)) {
+            if (auto* cb = qobject_cast<QComboBox*>(ed)) {
+                int idx = cb->findData(static_cast<int>(f.size));
+                if (idx >= 0) cb->setCurrentIndex(idx);
+            }
+        } else if (f.type == FieldType::Double && ma::isDoublePrecision(f.size)) {
+            if (auto* sp = qobject_cast<QSpinBox*>(ed)) {
+                sp->setValue(std::clamp<int>(f.size, 0, 19));
+            }
+        } else if (f.type == FieldType::Int32 && ma::isNumberSubtype(f.size)) {
+            if (auto* cb = qobject_cast<QComboBox*>(ed)) {
+                int idx = cb->findData(static_cast<int>(f.size));
+                if (idx >= 0) cb->setCurrentIndex(idx);
+            }
+        } else if (f.type == FieldType::Bool && ma::isBoolFmt(f.size)) {
+            if (auto* cb = qobject_cast<QComboBox*>(ed)) {
+                int idx = cb->findData(static_cast<int>(f.size));
+                if (idx >= 0) cb->setCurrentIndex(idx);
+            }
+        }
     }
+}
+
+ma::Schema DesignPage::collectSchema(bool* ok) const {
+    using namespace ma;
+    Schema s; s.tableName = "table";
+
+    for (int r=0; r<grid_->rowCount(); ++r) {
+        auto* itName = grid_->item(r,0);
+        if (!itName || itName->text().trimmed().isEmpty()) {
+            if (ok) *ok=false;
+            return {};
+        }
+        const QString name = itName->text().trimmed();
+
+        auto* combo = qobject_cast<QComboBox*>(grid_->cellWidget(r,1));
+        const QString tn = combo ? combo->currentText() : "Short Text";
+        const FieldType t = typeToCore(tn);
+
+        uint16_t size = 0;
+        QWidget* ed = grid_->cellWidget(r,2);
+
+        if (tn=="CharN") {
+            if (auto* sp = qobject_cast<QSpinBox*>(ed)) {
+                int v = sp->value(); if (v <= 0) v = 16;
+                size = static_cast<uint16_t>(v);
+            } else size = 16;
+        } else if (tn=="Short Text") {
+            if (auto* sp = qobject_cast<QSpinBox*>(ed)) {
+                int v = std::clamp(sp->value(), 1, 255);
+                size = static_cast<uint16_t>(v);
+            } else size = 50;
+        } else if (tn=="Double") {
+            if (auto* sp = qobject_cast<QSpinBox*>(ed)) {
+                int dec = std::clamp(sp->value(), 0, 19);
+                size = static_cast<uint16_t>(dec);
+            } else size = 2;
+        } else if (tn=="Number") {
+            if (auto* cb = qobject_cast<QComboBox*>(ed)) {
+                size = static_cast<uint16_t>(cb->currentData().toInt());
+            } else size = FMT_NUM_INT32;
+        } else if (tn=="Yes/No") {
+            if (auto* cb = qobject_cast<QComboBox*>(ed)) {
+                size = static_cast<uint16_t>(cb->currentData().toInt());
+            } else size = FMT_BOOL_TRUEFALSE;
+        } else if (tn=="Currency") {
+            if (auto* cb = qobject_cast<QComboBox*>(ed)) {
+                size = static_cast<uint16_t>(cb->currentData().toInt());
+            } else size = FMT_CUR_LPS;
+        } else if (tn=="Date/Time") {
+            if (auto* cb = qobject_cast<QComboBox*>(ed)) {
+                size = static_cast<uint16_t>(cb->currentData().toInt());
+            } else size = FMT_DT_GENERAL;
+        } else {
+            size = 0;
+        }
+
+        s.fields.push_back(Field{name.toStdString(), t, size});
+    }
+    if (ok) *ok = true;
+    return s;
 }
 
 void DesignPage::addField() {
     const int r = grid_->rowCount();
     grid_->insertRow(r);
 
-    auto* pkBox  = new QCheckBox(grid_);
-    pkBox->setObjectName("pkBox");
-    pkBox->setToolTip("Primary key");
-    pkBox->setTristate(false);
-
-    auto* pkWrap = new QWidget(grid_);
-    auto* pkLay  = new QHBoxLayout(pkWrap);
-    pkLay->setContentsMargins(0,0,0,0);
-    pkLay->addStretch();
-    pkLay->addWidget(pkBox);
-    pkLay->addStretch();
-    grid_->setCellWidget(r, 0, pkWrap);
-
-    connect(pkBox, &QCheckBox::toggled, this, [this, pkBox](bool on){
-        if (!on) return;
-        for (int rr=0; rr<grid_->rowCount(); ++rr) {
-            if (auto* other = pkBoxAt(rr)) {
-                if (other != pkBox) other->setChecked(false);
-            }
-        }
-    });
-
-    auto* itName = new QTableWidgetItem();
-    grid_->setItem(r, 1, itName);
+    grid_->setItem(r, 0, new QTableWidgetItem());
 
     auto* combo = new QComboBox(grid_);
-    combo->addItems(typeNames());
-    grid_->setCellWidget(r, 2, combo);
+    combo->addItems(QStringList({"Short Text","Number","Yes/No","Double","Currency","Date/Time","CharN"}));
+    grid_->setCellWidget(r, 1, combo);
+
+    fillFormatEditor(grid_, r, combo->currentText());
+
     connect(combo, &QComboBox::currentTextChanged,
             this,  &DesignPage::onComboTypeChanged,
             Qt::UniqueConnection);
-
-    fillFormatEditor(grid_, r, combo->currentText());
 }
 
 void DesignPage::removeField() {
@@ -485,7 +518,7 @@ void DesignPage::removeField() {
 }
 
 void DesignPage::onTypeChanged(int row) {
-    auto* combo = qobject_cast<QComboBox*>(grid_->cellWidget(row, 2));
+    auto* combo = qobject_cast<QComboBox*>(grid_->cellWidget(row, 1));
     if (!combo) return;
     const QString t = combo->currentText();
 
@@ -498,51 +531,6 @@ void DesignPage::onTypeChanged(int row) {
     else if (t=="Currency")    props_->setCurrentIndex(4);
     else if (t=="Date/Time")   props_->setCurrentIndex(5);
     else if (t=="CharN")       props_->setCurrentIndex(0);
-}
-
-Schema DesignPage::collectSchema(bool* ok) const {
-    if (ok) *ok = false;
-
-    QSet<QString> seen;
-    Schema s;
-    s.tableName = QFileInfo(basePath_).fileName().toStdString();
-
-    QString pkChosen;
-    for (int r=0;r<grid_->rowCount();++r) {
-        if (auto* w = qobject_cast<QWidget*>(grid_->cellWidget(r,0))) {
-            if (auto* pk = w->findChild<QCheckBox*>()) {
-                if (pk->isChecked()) {
-                    auto* it = grid_->item(r,1);
-                    if (it) pkChosen = it->text().trimmed();
-                }
-            }
-        }
-    }
-
-    for (int r=0; r<grid_->rowCount(); ++r) {
-        auto* itName = grid_->item(r,1);
-        if (!itName) return {};
-        const QString name = itName->text().trimmed();
-        if (name.isEmpty()) return {};
-        if (seen.contains(name.toCaseFolded())) return {};
-        seen.insert(name.toCaseFolded());
-
-        auto* combo = typeComboAt(grid_, r);
-        const QString tn = combo ? combo->currentText() : "Short Text";
-        FieldType t = typeToCore(tn);
-        uint16_t size = formatSizeFromWidget(grid_, r, tn);
-
-        s.fields.push_back(Field{name.toStdString(), t, size});
-    }
-
-    if (!pkChosen.isEmpty()) {
-        savePrimaryKeyNameForBase(basePath_, pkChosen);
-    } else {
-        QFile::remove(pkSidecarPath(basePath_));
-    }
-
-    if (ok) *ok = true;
-    return s;
 }
 
 bool DesignPage::isTableEmpty() const {
@@ -676,31 +664,9 @@ void DesignPage::onComboTypeChanged(const QString&) {
     if (!combo) return;
     int row = -1;
     for (int i=0; i<grid_->rowCount(); ++i) {
-        if (grid_->cellWidget(i, 2) == combo) {
+        if (grid_->cellWidget(i, 1) == combo) {
             row = i; break;
         }
     }
     if (row >= 0) onTypeChanged(row);
-}
-
-QCheckBox* DesignPage::pkBoxAt(int row) const {
-    if (row < 0 || row >= grid_->rowCount()) return nullptr;
-    if (auto* w = grid_->cellWidget(row, 0)) {
-        if (auto* cb = w->findChild<QCheckBox*>("pkBox")) return cb;
-    }
-    return nullptr;
-}
-
-bool DesignPage::eventFilter(QObject* obj, QEvent* ev) {
-    if (obj == grid_->viewport() && ev->type() == QEvent::MouseButtonPress) {
-        auto* me = static_cast<QMouseEvent*>(ev);
-        const QModelIndex idx = grid_->indexAt(me->pos());
-        if (idx.isValid() && idx.column() == 0) {
-            if (auto* cb = pkBoxAt(idx.row())) {
-                cb->setChecked(!cb->isChecked());
-                return true;
-            }
-        }
-    }
-    return QWidget::eventFilter(obj, ev);
 }
