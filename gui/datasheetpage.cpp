@@ -108,6 +108,23 @@ DatasheetPage::DatasheetPage(const QString& basePath, QWidget* parent)
     model_ = new TableModel(table_.get(), basePath_, this);
     view_->setModel(model_);
 
+    connect(model_, &QAbstractItemModel::dataChanged, this,
+            [this](const QModelIndex&, const QModelIndex&){ autoFitColumns(20); });
+
+    connect(model_, &QAbstractItemModel::rowsInserted, this,
+            [this](const QModelIndex&, int, int){ autoFitColumns(20); });
+
+    connect(model_, &QAbstractItemModel::rowsRemoved, this,
+            [this](const QModelIndex&, int, int){ autoFitColumns(20); });
+
+    connect(model_, &QAbstractItemModel::modelReset, this,
+            [this]{ autoFitColumns(20); });
+
+    connect(model_, &QAbstractItemModel::headerDataChanged, this,
+            [this](Qt::Orientation o, int, int){
+                if (o == Qt::Horizontal) autoFitColumns(20);
+            });
+
     QFont f0 = view_->font();
     basePt_ = f0.pointSizeF();
     if (basePt_ <= 0) basePt_ = 10.0;
@@ -301,10 +318,17 @@ void DatasheetPage::clearPrimaryKey() {
 
 void DatasheetPage::autoFitColumns(int extraPx) {
     if (!model_ || !view_) return;
+    auto* hdr = view_->horizontalHeader();
 
     for (int c = 0; c < model_->columnCount(); ++c) {
         view_->resizeColumnToContents(c);
-        int w = view_->columnWidth(c);
-        view_->setColumnWidth(c, w + extraPx);
+        int contentW = view_->columnWidth(c);
+
+        QString headerText = model_->headerData(c, Qt::Horizontal, Qt::DisplayRole).toString();
+        QFontMetrics fm(hdr->font());
+        int headerW = fm.horizontalAdvance(headerText) + 24;
+
+        int finalW = std::max(contentW, headerW) + extraPx;
+        view_->setColumnWidth(c, finalW);
     }
 }
