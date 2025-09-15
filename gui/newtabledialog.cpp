@@ -24,6 +24,11 @@ NewTableDialog::NewTableDialog(QWidget* parent)
     nameEdit_ = new QLineEdit(this);
     nameEdit_->setPlaceholderText("e.g. Customers");
     nameEdit_->setText("NewTable");
+    nameEdit_->setStyleSheet(
+        "QLineEdit {"
+        "  color: white;"
+        "}"
+        );
     row->addWidget(nameEdit_, 1);
     lay->addLayout(row);
 

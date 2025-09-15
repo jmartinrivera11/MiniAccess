@@ -80,4 +80,5 @@ private:
     QMap<QString, ma::Schema> schemas_;
     QMap<QString, Node*> nodes_;
     QVector<Rel> relations_;
+    QMap<QString, QString> tableBase_;
 };

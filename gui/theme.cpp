@@ -112,13 +112,31 @@ QDockWidget#ObjectsDock QLineEdit {
   background:%4; border:1px solid %8; border-radius:6px; padding:6px 8px;
   selection-background-color:%12; selection-color:%13;
 }
+
+/* Lista de tablas (dock izquierdo) */
 QDockWidget#ObjectsDock QListWidget {
   background:%11; border:1px solid %8;
+  color:%13;
 }
-QDockWidget#ObjectsDock QListWidget::item { padding:6px 8px; }
-QDockWidget#ObjectsDock QListWidget::item:hover { background:%6; }
+QDockWidget#ObjectsDock QListWidget::item {
+  padding:6px 8px;
+  color:%13;
+}
+/* Al pasar el cursor: fondo claro y texto OSCURO (legible) */
+QDockWidget#ObjectsDock QListWidget::item:hover {
+  background:%6;
+  color:%1;
+}
+/* Seleccionado: se mantiene tu estilo actual */
 QDockWidget#ObjectsDock QListWidget::item:selected {
-  background:%12; color:%13; border-left:3px solid %7;
+  background:%12;
+  color:%13;
+  border-left:3px solid %7;
+}
+/* Seleccionado + hover */
+QDockWidget#ObjectsDock QListWidget::item:selected:hover {
+  background:%12;
+  color:%13;
 }
 
 /* ===== Tabs documento ===== */

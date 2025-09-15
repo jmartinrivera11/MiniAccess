@@ -35,6 +35,8 @@ if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
         gui/boolcheckdelegate.h gui/boolcheckdelegate.cpp
         gui/theme.h gui/theme.cpp
         resources.qrc
+
+
         gui/objectsdock.h gui/objectsdock.cpp
         gui/datasheetpage.h gui/datasheetpage.cpp
         gui/designpage.h gui/designpage.cpp

@@ -40,4 +40,5 @@ private:
     double basePt_ { 0.0 };
     double zoom_   { 1.0 };
     void applyZoom();
+    void autoFitColumns(int extraPx = 20);
 };

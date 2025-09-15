@@ -128,13 +128,18 @@ DatasheetPage::DatasheetPage(const QString& basePath, QWidget* parent)
     connect(hdr, &QHeaderView::customContextMenuRequested,
             this, &DatasheetPage::onHeaderContextMenu);
 
+    hdr->setSectionResizeMode(QHeaderView::Interactive);
+    hdr->setSectionsMovable(true);
+    hdr->setSectionsClickable(true);
+    hdr->setStretchLastSection(false);
+
     refreshPkBadge();
 
     view_->setAlternatingRowColors(true);
     view_->verticalHeader()->setDefaultSectionSize(22);
     view_->horizontalHeader()->setHighlightSections(false);
 
-    view_->resizeColumnsToContents();
+    autoFitColumns(20);
     info_->setText(QString("Rows: %1").arg(model_->rowCount()));
 }
 
@@ -188,7 +193,7 @@ void DatasheetPage::deleteRows() {
 void DatasheetPage::refresh() {
     if (!model_) return;
     model_->reload();
-    view_->resizeColumnsToContents();
+    autoFitColumns(20);
     info_->setText(QString("Rows: %1").arg(model_->rowCount()));
 }
 
@@ -203,7 +208,7 @@ void DatasheetPage::applyZoom() {
 
     const int rowh = QFontMetrics(f).height() + 6;
     view_->verticalHeader()->setDefaultSectionSize(rowh);
-    view_->resizeColumnsToContents();
+    autoFitColumns(20);
     view_->viewport()->update();
 }
 
@@ -292,4 +297,14 @@ void DatasheetPage::clearPrimaryKey() {
         return;
     }
     model_->setPrimaryKeyName(QString());
+}
+
+void DatasheetPage::autoFitColumns(int extraPx) {
+    if (!model_ || !view_) return;
+
+    for (int c = 0; c < model_->columnCount(); ++c) {
+        view_->resizeColumnToContents(c);
+        int w = view_->columnWidth(c);
+        view_->setColumnWidth(c, w + extraPx);
+    }
 }

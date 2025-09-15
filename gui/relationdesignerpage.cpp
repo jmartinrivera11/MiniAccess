@@ -23,6 +23,10 @@
 #include <QMessageBox>
 #include <QTimer>
 #include <QGraphicsPathItem>
+#include <QIcon>
+#include <QPixmap>
+#include <QPainter>
+#include <QImage>
 #include "../core/Table.h"
 #include "../core/Schema.h"
 
@@ -52,6 +56,51 @@ RelationDesignerPage::RelationDesignerPage(const QString& projectDir, QWidget* p
     loadFromJson();
 
     connect(scene_, &QGraphicsScene::changed, this, &RelationDesignerPage::onSceneChanged);
+}
+
+static QString readPkNameForBase_Rel(const QString& basePath) {
+    {
+        QFile f(basePath + ".pk.json");
+        if (f.exists() && f.open(QIODevice::ReadOnly)) {
+            const auto doc = QJsonDocument::fromJson(f.readAll());
+            const QString pk = doc.object().value(QStringLiteral("primaryKey")).toString();
+            if (!pk.isEmpty()) return pk;
+        }
+    }
+    {
+        QFile f(basePath + ".keys.json");
+        if (f.exists() && f.open(QIODevice::ReadOnly)) {
+            const auto doc = QJsonDocument::fromJson(f.readAll());
+            const QString pk = doc.object().value(QStringLiteral("primaryKey")).toString();
+            if (!pk.isEmpty()) return pk;
+        }
+    }
+    return {};
+}
+
+
+static QPixmap tintedSvg(const QString& resPath, const QColor& color, const QSize& sz) {
+
+    QIcon ic(resPath);
+    QPixmap src = ic.pixmap(sz);
+    if (src.isNull()) {
+        return QPixmap();
+    }
+
+
+    QImage img = src.toImage().convertToFormat(QImage::Format_ARGB32_Premultiplied);
+
+
+    for (int y = 0; y < img.height(); ++y) {
+        QRgb* scan = reinterpret_cast<QRgb*>(img.scanLine(y));
+        for (int x = 0; x < img.width(); ++x) {
+            const int a = qAlpha(scan[x]);
+            if (a > 0) scan[x] = qRgba(color.red(), color.green(), color.blue(), a);
+        }
+    }
+
+    QPixmap pm = QPixmap::fromImage(img);
+    return pm;
 }
 
 void RelationDesignerPage::buildUi() {
@@ -143,7 +192,11 @@ void RelationDesignerPage::loadTables() {
             ma::Table t; t.open(base.toStdString());
             ma::Schema s = t.getSchema();
             QString name = QString::fromStdString(s.tableName);
+            if (name.trimmed().isEmpty()) {
+                name = QFileInfo(base).completeBaseName();
+            }
             schemas_.insert(name, s);
+            tableBase_.insert(name, base);
             leftTable_->addItem(name);
             rightTable_->addItem(name);
         } catch (...) {
@@ -174,16 +227,39 @@ void RelationDesignerPage::layoutNodes() {
         title->setPos(rect.left()+8, rect.top()+6);
         title->setParentItem(box);
 
+        const QString basePath = tableBase_.value(name);
+        const QString pkName   = basePath.isEmpty() ? QString() : readPkNameForBase_Rel(basePath);
+
+
         QMap<QString, QGraphicsSimpleTextItem*> labels;
         int y = 30;
+
+        const int  iconSize   = 20;
+        const int  padLeft    = 10;
+        const int  gapIconTxt = 0;
+        const qreal textX     = rect.left() + padLeft + iconSize + gapIconTxt;
+
         for (const auto& f : s.fields) {
             QString fname = QString::fromStdString(f.name);
             auto* lbl = scene_->addSimpleText(fname);
             lbl->setFont(fieldFont());
-            lbl->setPos(rect.left()+12, rect.top()+y);
+           // lbl->setPos(rect.left()+12, rect.top()+y);
+            lbl->setPos(textX, rect.top() + y);
             lbl->setParentItem(box);
             labels.insert(fname, lbl);
-            y += 16;
+
+            if (!pkName.isEmpty() && fname.compare(pkName, Qt::CaseInsensitive) == 0) {
+                QIcon ic(":/icons/icons/pk_black.svg");
+                QPixmap pm = ic.pixmap(QSize(iconSize, iconSize));
+
+                auto* pix = scene_->addPixmap(pm);
+                const qreal iconX = rect.left() + padLeft;
+                const qreal iconY = lbl->pos().y() + lbl->boundingRect().height()/2.0 - pm.height()/2.0;
+                pix->setPos(iconX, iconY);
+                pix->setParentItem(box);
+            }
+
+            y += 20;
         }
 
         box->setPos(col*colW + 40, row*rowH + 40);
