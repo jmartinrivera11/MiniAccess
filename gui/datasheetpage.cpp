@@ -108,6 +108,10 @@ DatasheetPage::DatasheetPage(const QString& basePath, QWidget* parent)
     model_ = new TableModel(table_.get(), basePath_, this);
     view_->setModel(model_);
 
+    const QString pkOnDisk = loadPrimaryKeyNameForBase(basePath_);
+    model_->setPrimaryKeyName(pkOnDisk);
+    view_->horizontalHeader()->viewport()->update();
+
     connect(model_, &QAbstractItemModel::dataChanged, this,
             [this](const QModelIndex&, const QModelIndex&){ autoFitColumns(20); });
 
@@ -212,6 +216,10 @@ void DatasheetPage::refresh() {
     model_->reload();
     autoFitColumns(20);
     info_->setText(QString("Rows: %1").arg(model_->rowCount()));
+
+    const QString pkOnDisk = loadPrimaryKeyNameForBase(basePath_);
+    model_->setPrimaryKeyName(pkOnDisk);
+    view_->horizontalHeader()->viewport()->update();
 }
 
 void DatasheetPage::applyZoom() {
