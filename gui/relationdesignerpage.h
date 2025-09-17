@@ -60,6 +60,11 @@ private:
     void loadRelations();
     void saveRelations();
 
+protected:
+    void dragEnterEvent(QDragEnterEvent* ev) override;
+    void dropEvent(QDropEvent* ev) override;
+     bool eventFilter(QObject* obj, QEvent* ev) override;
+
 private:
     QString projectDir_;
     QGraphicsScene* scene_ = nullptr;
@@ -81,4 +86,7 @@ private:
     QMap<QString, Node*> nodes_;
     QVector<Rel> relations_;
     QMap<QString, QString> tableBase_;
+
+    void addTableBoxAt(const QString& tableName, const QPointF& scenePos);
+    QString tableNameFromMime(const QMimeData* md) const;
 };

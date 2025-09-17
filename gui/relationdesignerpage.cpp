@@ -30,6 +30,9 @@
 #include "../core/Table.h"
 #include "../core/Schema.h"
 
+#include <QDragEnterEvent>
+#include <QMimeData>
+
 using namespace ma;
 
 static QFont titleFont() {
@@ -52,10 +55,12 @@ RelationDesignerPage::RelationDesignerPage(const QString& projectDir, QWidget* p
 {
     buildUi();
     loadTables();
-    layoutNodes();
+   // layoutNodes();
     loadFromJson();
 
     connect(scene_, &QGraphicsScene::changed, this, &RelationDesignerPage::onSceneChanged);
+
+    setAcceptDrops(true);
 }
 
 static QString readPkNameForBase_Rel(const QString& basePath) {
@@ -114,6 +119,8 @@ void RelationDesignerPage::buildUi() {
     view_->setDragMode(QGraphicsView::RubberBandDrag);
     view_->setViewportUpdateMode(QGraphicsView::FullViewportUpdate);
     view_->setMinimumSize(640, 420);
+    view_->viewport()->setAcceptDrops(true);
+    view_->viewport()->installEventFilter(this);
 
     QWidget* panel = new QWidget(this);
     auto* pv = new QVBoxLayout(panel);
@@ -175,6 +182,41 @@ void RelationDesignerPage::buildUi() {
     connect(btnAdd_,     &QPushButton::clicked,          this, &RelationDesignerPage::onAddRelation);
     connect(btnRemove_,  &QPushButton::clicked,          this, &RelationDesignerPage::onRemoveSelected);
     connect(btnSave_,    &QPushButton::clicked,          this, &RelationDesignerPage::onSave);
+}
+
+void RelationDesignerPage::dragEnterEvent(QDragEnterEvent* ev) {
+    if (ev->mimeData()->hasText())
+        ev->acceptProposedAction();
+}
+
+void RelationDesignerPage::dropEvent(QDropEvent* ev) {
+    if (!ev->mimeData()->hasText()) return;
+
+    QString tableName = ev->mimeData()->text();
+
+    if (nodes_.contains(tableName)) {
+        ev->acceptProposedAction();
+        return;
+    }
+
+    QRectF rect(0,0,240,60);
+    auto* box = scene_->addRect(rect, QPen(Qt::gray,1.0), QBrush(Qt::white));
+    box->setFlag(QGraphicsItem::ItemIsMovable, true);
+    box->setFlag(QGraphicsItem::ItemIsSelectable, true);
+
+    auto* title = scene_->addSimpleText(tableName);
+    title->setFont(QFont("Segoe UI",10,QFont::Bold));
+    title->setPos(rect.left()+8, rect.top()+6);
+    title->setParentItem(box);
+
+
+    QPointF scenePos = view_->mapToScene(ev->pos());
+    box->setPos(scenePos);
+
+    Node* n = new Node{tableName, box, {}};
+    nodes_.insert(tableName, n);
+
+    ev->acceptProposedAction();
 }
 
 void RelationDesignerPage::loadTables() {
