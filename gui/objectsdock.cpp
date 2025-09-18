@@ -50,8 +50,6 @@ ObjectsDock::ObjectsDock(QWidget* parent) : QDockWidget(parent) {
     lay->addWidget(search_);
 
     list_ = new QListWidget(root_);
-    list_->setDragEnabled(true);
-    list_->setDragDropMode(QAbstractItemView::DragOnly);
     list_->setSelectionMode(QAbstractItemView::SingleSelection);
     list_->setContextMenuPolicy(Qt::CustomContextMenu);
     list_->viewport()->installEventFilter(this);
