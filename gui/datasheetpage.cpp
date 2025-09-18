@@ -8,6 +8,7 @@
 #include "TableModel.h"
 #include "boolcheckdelegate.h"
 #include "formatdelegate.h"
+#include "../core/pk_utils.h"
 #include <QAbstractItemView>
 #include <QCoreApplication>
 #include <QPainter>
@@ -31,26 +32,6 @@ static int fieldIndexByName(const ma::Schema& s, const QString& name) {
     return -1;
 }
 
-static inline QString pkSidecarPathForBase(const QString& basePath) {
-    return basePath + ".pk.json";
-}
-
-static QString readPkNameForBase(const QString& basePath) {
-    QFile f(pkSidecarPathForBase(basePath));
-    if (!f.exists() || !f.open(QIODevice::ReadOnly)) return {};
-    const auto doc = QJsonDocument::fromJson(f.readAll());
-    const auto o   = doc.object();
-    return o.value(QStringLiteral("primaryKey")).toString();
-}
-
-static bool writePkNameForBase(const QString& basePath, const QString& pkName) {
-    QFile f(pkSidecarPathForBase(basePath));
-    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return false;
-    QJsonObject o; o["primaryKey"] = pkName;
-    QJsonDocument d(o);
-    return f.write(d.toJson(QJsonDocument::Indented)) >= 0;
-}
-
 static QIcon makePkIconRuntime() {
     const QColor col(15,143,102);
     QPixmap pm(16,16); pm.fill(Qt::transparent);
@@ -71,31 +52,14 @@ static QIcon pkIcon() {
     return makePkIconRuntime();
 }
 
-static inline QString pkPathForBase(const QString& basePath) {
-    return basePath + ".pk.json";
-}
-
 static inline QString loadPrimaryKeyNameForBase(const QString& basePath) {
-    QFile f(pkPathForBase(basePath));
-    if (!f.exists() || !f.open(QIODevice::ReadOnly)) return {};
-    const auto doc = QJsonDocument::fromJson(f.readAll());
-    f.close();
-    const auto o = doc.object();
-    return o.value("primaryKey").toString();
+    migratePkIfNeeded(basePath);
+    return loadPk(basePath);
 }
 
 static inline bool savePrimaryKeyNameForBase(const QString& basePath, const QString& name) {
-    const QString path = pkPathForBase(basePath);
-    if (name.trimmed().isEmpty()) {
-        QFile::remove(path);
-        return true;
-    }
-    QSaveFile sf(path);
-    if (!sf.open(QIODevice::WriteOnly)) return false;
-    QJsonObject o; o["primaryKey"] = name;
-    QJsonDocument doc(o);
-    sf.write(doc.toJson(QJsonDocument::Compact));
-    return sf.commit();
+    migratePkIfNeeded(basePath);
+    return savePk(basePath, name.trimmed());
 }
 
 DatasheetPage::DatasheetPage(const QString& basePath, QWidget* parent)

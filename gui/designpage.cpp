@@ -13,6 +13,7 @@
 #include <QSignalBlocker>
 #include "../core/Table.h"
 #include "../core/DisplayFmt.h"
+#include "../core/pk_utils.h"
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -171,10 +172,6 @@ static uint16_t formatSizeFromWidget(QTableWidget* grid, int row, const QString&
     }
 }
 
-static QString pkSidecarPath(const QString& basePath) {
-    return basePath + ".keys.json";
-}
-
 static QString coreToTypeName(const ma::Field& f) {
     using namespace ma;
     if (f.type==FieldType::Double && ma::isCurrencyFmt(f.size)) return "Currency";
@@ -187,23 +184,6 @@ static QString coreToTypeName(const ma::Field& f) {
     case FieldType::CharN:  return "CharN";
     default: return "Short Text";
     }
-}
-
-static QString loadPrimaryKeyNameForBase(const QString& basePath) {
-    QFile f(pkSidecarPath(basePath));
-    if (!f.exists() || !f.open(QIODevice::ReadOnly)) return {};
-    const auto doc = QJsonDocument::fromJson(f.readAll());
-    return doc.object().value("primaryKey").toString();
-}
-
-static bool savePrimaryKeyNameForBase(const QString& basePath, const QString& pkName) {
-    QFile f(pkSidecarPath(basePath));
-    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return false;
-    QJsonObject o; o["primaryKey"] = pkName;
-    QJsonDocument doc(o);
-    f.write(doc.toJson(QJsonDocument::Indented));
-    f.close();
-    return true;
 }
 
 static QStringList typeNames() {
@@ -321,6 +301,15 @@ static std::optional<ma::Value> convertValueForNewField(const ma::Field& newF,
 }
 
 static QString pkFileForBase(const QString& basePath) { return basePath + ".keys.json"; }
+
+static QString loadPrimaryKeyNameForBase(const QString& basePath) {
+    migratePkIfNeeded(basePath);
+    return loadPk(basePath);
+}
+
+static bool savePrimaryKeyNameForBase(const QString& basePath, const QString& pkName) {
+    return savePk(basePath, pkName);
+}
 
 DesignPage::DesignPage(const QString& basePath, QWidget* parent)
     : QWidget(parent), basePath_(basePath) {

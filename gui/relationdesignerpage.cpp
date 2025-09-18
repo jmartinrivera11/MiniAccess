@@ -1,5 +1,4 @@
 #include "RelationDesignerPage.h"
-
 #include <QGraphicsScene>
 #include <QGraphicsView>
 #include <QGraphicsRectItem>
@@ -29,6 +28,7 @@
 #include <QImage>
 #include "../core/Table.h"
 #include "../core/Schema.h"
+#include "../core/pk_utils.h"
 
 using namespace ma;
 
@@ -43,6 +43,7 @@ static QFont fieldFont() {
 static QString projectDirFromBase(const QString& basePath) {
     return QFileInfo(basePath).dir().absolutePath();
 }
+
 static QString relationsPathForProject(const QString& anyTableBase) {
     return QDir(projectDirFromBase(anyTableBase)).filePath("relations.json");
 }
@@ -58,27 +59,6 @@ RelationDesignerPage::RelationDesignerPage(const QString& projectDir, QWidget* p
     connect(scene_, &QGraphicsScene::changed, this, &RelationDesignerPage::onSceneChanged);
 }
 
-static QString readPkNameForBase_Rel(const QString& basePath) {
-    {
-        QFile f(basePath + ".pk.json");
-        if (f.exists() && f.open(QIODevice::ReadOnly)) {
-            const auto doc = QJsonDocument::fromJson(f.readAll());
-            const QString pk = doc.object().value(QStringLiteral("primaryKey")).toString();
-            if (!pk.isEmpty()) return pk;
-        }
-    }
-    {
-        QFile f(basePath + ".keys.json");
-        if (f.exists() && f.open(QIODevice::ReadOnly)) {
-            const auto doc = QJsonDocument::fromJson(f.readAll());
-            const QString pk = doc.object().value(QStringLiteral("primaryKey")).toString();
-            if (!pk.isEmpty()) return pk;
-        }
-    }
-    return {};
-}
-
-
 static QPixmap tintedSvg(const QString& resPath, const QColor& color, const QSize& sz) {
 
     QIcon ic(resPath);
@@ -87,9 +67,7 @@ static QPixmap tintedSvg(const QString& resPath, const QColor& color, const QSiz
         return QPixmap();
     }
 
-
     QImage img = src.toImage().convertToFormat(QImage::Format_ARGB32_Premultiplied);
-
 
     for (int y = 0; y < img.height(); ++y) {
         QRgb* scan = reinterpret_cast<QRgb*>(img.scanLine(y));
@@ -101,6 +79,11 @@ static QPixmap tintedSvg(const QString& resPath, const QColor& color, const QSiz
 
     QPixmap pm = QPixmap::fromImage(img);
     return pm;
+}
+
+static QString readPkNameForBase_Rel(const QString& basePath) {
+    migratePkIfNeeded(basePath);
+    return loadPk(basePath);
 }
 
 void RelationDesignerPage::buildUi() {

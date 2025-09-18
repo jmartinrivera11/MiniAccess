@@ -49,6 +49,7 @@ if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
         core/DisplayFmt.h
         gui/querymodel.h gui/querymodel.cpp
         gui/newtabledialog.h gui/newtabledialog.cpp
+        core/pk_utils.h core/pk_utils.cpp
 
 
     )
