@@ -50,6 +50,8 @@ if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
         gui/querymodel.h gui/querymodel.cpp
         gui/newtabledialog.h gui/newtabledialog.cpp
         core/pk_utils.h core/pk_utils.cpp
+        core/relations_io.h core/relations_io.cpp
+        core/metadata.h core/metadata.cpp
 
 
     )

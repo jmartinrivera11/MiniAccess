@@ -1,519 +1,802 @@
-#include "RelationDesignerPage.h"
+#include "relationdesignerpage.h"
 #include <QGraphicsScene>
 #include <QGraphicsView>
 #include <QGraphicsRectItem>
-#include <QGraphicsSimpleTextItem>
-#include <QGraphicsPathItem>
-#include <QSplitter>
+#include <QGraphicsTextItem>
+#include <QGraphicsSceneMouseEvent>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
-#include <QFormLayout>
-#include <QTableWidget>
-#include <QHeaderView>
+#include <QSplitter>
+#include <QListWidget>
+#include <QListWidgetItem>
 #include <QComboBox>
 #include <QCheckBox>
 #include <QPushButton>
+#include <QTableWidget>
+#include <QHeaderView>
+#include <QLabel>
 #include <QDir>
 #include <QFileInfo>
 #include <QFile>
 #include <QJsonDocument>
-#include <QJsonArray>
 #include <QJsonObject>
+#include <QJsonArray>
+#include <QPen>
+#include <QBrush>
+#include <QtMath>
+#include <QMimeData>
+#include <QDrag>
+#include <QDataStream>
 #include <QMessageBox>
-#include <QTimer>
-#include <QGraphicsPathItem>
-#include <QIcon>
-#include <QPixmap>
-#include <QPainter>
-#include <QImage>
-#include "../core/Table.h"
-#include "../core/Schema.h"
+#include <QSizePolicy>
+#include <QFont>
+#include <qevent.h>
 #include "../core/pk_utils.h"
+#include "../core/relations_io.h"
+#include "../core/metadata.h"
 
-using namespace ma;
-
-static QFont titleFont() {
-    QFont f; f.setBold(true); f.setPointSize(10); return f;
+static QFont safeUiFontRegular(int pt = 10) {
+#ifdef Q_OS_WIN
+    QFont f; f.setFamilies(QStringList() << "Segoe UI" << "Arial" << "Tahoma" << "Sans Serif");
+#else
+    QFont f; f.setFamilies(QStringList() << "Noto Sans" << "DejaVu Sans" << "Sans Serif" << "Arial");
+#endif
+    f.setPointSize(pt);
+    f.setStyleHint(QFont::SansSerif);
+    return f;
 }
+static QFont safeUiFontBold(int pt = 10) { QFont f = safeUiFontRegular(pt); f.setBold(true); return f; }
 
-static QFont fieldFont() {
-    QFont f; f.setPointSize(9); return f;
-}
+class RelationDesignerPage::FieldItem : public QGraphicsRectItem {
+public:
+    FieldItem(RelationDesignerPage* owner, const QString& table, const QString& name, bool isPk, QGraphicsItem* parent=nullptr)
+        : QGraphicsRectItem(parent), owner_(owner), table_(table), name_(name), pk_(isPk)
+    {
+        setRect(0, 0, 240, 22);
+        setPen(QPen(QColor(180,180,180)));
+        setBrush(QBrush(Qt::white));
+        setAcceptHoverEvents(true);
 
-static QString projectDirFromBase(const QString& basePath) {
-    return QFileInfo(basePath).dir().absolutePath();
-}
+        text_ = new QGraphicsTextItem(name_, this);
+        text_->setDefaultTextColor(Qt::black);
+        text_->setFont(safeUiFontRegular());
+        text_->setPos(8, 2);
 
-static QString relationsPathForProject(const QString& anyTableBase) {
-    return QDir(projectDirFromBase(anyTableBase)).filePath("relations.json");
-}
+        if (pk_) {
+            pkLabel_ = new QGraphicsTextItem(QStringLiteral("PK"), this);
+            pkLabel_->setDefaultTextColor(Qt::black);
+            pkLabel_->setFont(safeUiFontBold());
+            pkLabel_->setPos(218-10, 2);
+        }
+    }
+
+    bool isPicked() const { return picked_; }
+    void setPicked(bool v) {
+        if (picked_ == v) return;
+        picked_ = v;
+        if (picked_) { setPen(QPen(QColor(30,120,200), 2)); setBrush(QBrush(QColor(235,245,255))); }
+        else         { setPen(QPen(QColor(180,180,180), 1)); setBrush(QBrush(Qt::white)); }
+    }
+
+protected:
+    void mousePressEvent(QGraphicsSceneMouseEvent* ev) override {
+        if (ev->button() == Qt::LeftButton) {
+            owner_->onFieldClicked(this);
+            ev->accept(); return;
+        }
+        QGraphicsRectItem::mousePressEvent(ev);
+    }
+
+public:
+    QString table() const { return table_; }
+    QString name()  const { return name_; }
+    bool    isPk()  const { return pk_; }
+
+private:
+    RelationDesignerPage* owner_{nullptr};
+    QString table_;
+    QString name_;
+    bool pk_{false};
+    bool picked_{false};
+    QGraphicsTextItem* text_{nullptr};
+    QGraphicsTextItem* pkLabel_{nullptr};
+};
+
+class RelationDesignerPage::TableBox : public QGraphicsRectItem {
+public:
+    TableBox(RelationDesignerPage* owner, const QString& table, const QStringList& fields, const QString& pk, QGraphicsItem* parent=nullptr)
+        : QGraphicsRectItem(parent), owner_(owner), table_(table), pk_(pk)
+    {
+        const int rows = fields.size();
+        const int h = qMax(44, 28 + rows*24);
+        setRect(0, 0, 260, h);
+        setBrush(QBrush(QColor(245,249,255)));
+        setPen(QPen(QColor(40,90,140), 1.4));
+        setFlag(QGraphicsItem::ItemIsMovable, true);
+        setFlag(QGraphicsItem::ItemIsSelectable, true);
+        setFlag(QGraphicsItem::ItemSendsGeometryChanges, true);
+
+        auto* header = new QGraphicsRectItem(0,0,260,24, this);
+        header->setBrush(QBrush(QColor(220,235,255)));
+        header->setPen(QPen(QColor(40,90,140)));
+        auto* title = new QGraphicsTextItem(table_, header);
+        title->setDefaultTextColor(QColor(20,40,60));
+        title->setFont(safeUiFontBold());
+        title->setPos(8, 2);
+
+        int y = 28;
+        for (const auto& f : fields) {
+            const bool isPk = (!pk_.isEmpty() && f == pk_);
+            auto* fi = new FieldItem(owner_, table, f, isPk, this);
+            fi->setPos(10, y);
+            items_.push_back(fi);
+            y += 24;
+        }
+    }
+
+    QVariant itemChange(GraphicsItemChange change, const QVariant &value) override {
+        if (change == ItemPositionHasChanged) {
+            owner_->updateRelationsForTable(table_);
+        }
+        return QGraphicsRectItem::itemChange(change, value);
+    }
+
+    QString table() const { return table_; }
+    QString pk() const { return pk_; }
+    QList<FieldItem*> fieldItems() const { return items_; }
+
+private:
+    RelationDesignerPage* owner_{nullptr};
+    QString table_;
+    QString pk_;
+    QList<FieldItem*> items_;
+};
+
+class RelationDesignerPage::CanvasView : public QGraphicsView {
+public:
+    explicit CanvasView(QGraphicsScene* s, RelationDesignerPage* owner, QWidget* parent=nullptr)
+        : QGraphicsView(s, parent), owner_(owner) {
+        setAcceptDrops(true);
+        setRenderHints(QPainter::Antialiasing | QPainter::TextAntialiasing);
+        setDragMode(QGraphicsView::RubberBandDrag);
+    }
+protected:
+    void dragEnterEvent(QDragEnterEvent* e) override {
+        if (e->mimeData()->hasFormat("application/x-miniaccess-table")) e->acceptProposedAction();
+        else QGraphicsView::dragEnterEvent(e);
+    }
+    void dragMoveEvent(QDragMoveEvent* e) override {
+        if (e->mimeData()->hasFormat("application/x-miniaccess-table")) e->acceptProposedAction();
+        else QGraphicsView::dragMoveEvent(e);
+    }
+    void dropEvent(QDropEvent* e) override {
+        if (!e->mimeData()->hasFormat("application/x-miniaccess-table")) {
+            QGraphicsView::dropEvent(e); return;
+        }
+        const QByteArray bytes = e->mimeData()->data("application/x-miniaccess-table");
+        const QString table = QString::fromUtf8(bytes);
+        const QPointF scenePos = mapToScene(e->position().toPoint());
+        owner_->addTableBoxAt(table, scenePos);
+        e->acceptProposedAction();
+    }
+private:
+    RelationDesignerPage* owner_;
+};
+
+class TablesListWidget : public QListWidget {
+public:
+    using QListWidget::QListWidget;
+protected:
+    void startDrag(Qt::DropActions actions) override {
+        Q_UNUSED(actions);
+        auto* it = currentItem();
+        if (!it) return;
+        const QString table = it->data(Qt::UserRole).toString();
+        auto* mime = new QMimeData();
+        mime->setData("application/x-miniaccess-table", table.toUtf8());
+        auto* drag = new QDrag(this);
+        drag->setMimeData(mime);
+        drag->exec(Qt::CopyAction);
+    }
+};
 
 RelationDesignerPage::RelationDesignerPage(const QString& projectDir, QWidget* parent)
-    : QWidget(parent), projectDir_(projectDir)
+    : QWidget(parent)
+    , scene_(new QGraphicsScene(this))
+    , view_(nullptr)
+    , tablesList_(nullptr)
+    , cbRelType_(nullptr)
+    , cbEnforce_(nullptr)
+    , cbCascadeUpd_(nullptr)
+    , cbCascadeDel_(nullptr)
+    , btnCreate_(nullptr)
+    , btnDelete_(nullptr)
+    , btnSave_(nullptr)
+    , relationsGrid_(nullptr)
+    , projectDir_(projectDir)
 {
     buildUi();
-    loadTables();
-    layoutNodes();
-    loadFromJson();
-
-    connect(scene_, &QGraphicsScene::changed, this, &RelationDesignerPage::onSceneChanged);
+    loadTablesList();
+    migrateJsonIfNeeded();
+    loadFromJsonV2();
 }
 
-static QPixmap tintedSvg(const QString& resPath, const QColor& color, const QSize& sz) {
-
-    QIcon ic(resPath);
-    QPixmap src = ic.pixmap(sz);
-    if (src.isNull()) {
-        return QPixmap();
-    }
-
-    QImage img = src.toImage().convertToFormat(QImage::Format_ARGB32_Premultiplied);
-
-    for (int y = 0; y < img.height(); ++y) {
-        QRgb* scan = reinterpret_cast<QRgb*>(img.scanLine(y));
-        for (int x = 0; x < img.width(); ++x) {
-            const int a = qAlpha(scan[x]);
-            if (a > 0) scan[x] = qRgba(color.red(), color.green(), color.blue(), a);
-        }
-    }
-
-    QPixmap pm = QPixmap::fromImage(img);
-    return pm;
-}
-
-static QString readPkNameForBase_Rel(const QString& basePath) {
-    migratePkIfNeeded(basePath);
-    return loadPk(basePath);
-}
+RelationDesignerPage::~RelationDesignerPage() = default;
 
 void RelationDesignerPage::buildUi() {
-    auto* lay = new QHBoxLayout(this);
-    lay->setContentsMargins(6,6,6,6);
-    lay->setSpacing(6);
+    auto* root = new QHBoxLayout(this);
+    root->setContentsMargins(0,0,0,0);
 
-    scene_ = new QGraphicsScene(this);
-    view_  = new QGraphicsView(scene_, this);
-    view_->setRenderHint(QPainter::Antialiasing, true);
-    view_->setDragMode(QGraphicsView::RubberBandDrag);
-    view_->setViewportUpdateMode(QGraphicsView::FullViewportUpdate);
-    view_->setMinimumSize(640, 420);
+    auto* splitter = new QSplitter(Qt::Horizontal, this);
 
-    QWidget* panel = new QWidget(this);
-    auto* pv = new QVBoxLayout(panel);
-    pv->setContentsMargins(6,6,6,6);
-    pv->setSpacing(8);
+    view_ = new CanvasView(scene_, this, this);
+    auto* leftPane = new QWidget(this);
+    auto* leftLay = new QVBoxLayout(leftPane);
+    leftLay->setContentsMargins(0,0,0,0);
+    leftLay->addWidget(view_);
 
-    auto* form1 = new QFormLayout();
-    form1->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    auto* rightPane = new QWidget(this);
+    auto* rightLay = new QVBoxLayout(rightPane);
+    rightLay->setContentsMargins(8,8,8,8);
 
-    leftTable_ = new QComboBox(panel);
-    leftField_ = new QComboBox(panel);
-    rightTable_ = new QComboBox(panel);
-    rightField_ = new QComboBox(panel);
-    joinType_ = new QComboBox(panel);
-    joinType_->addItems({"INNER","LEFT"});
+    tablesList_ = new TablesListWidget(this);
+    tablesList_->setSelectionMode(QAbstractItemView::SingleSelection);
+    tablesList_->setDragEnabled(true);
+    tablesList_->setDefaultDropAction(Qt::IgnoreAction);
+    tablesList_->setDragDropMode(QAbstractItemView::DragOnly);
+    tablesList_->setFixedWidth(300);
+    tablesList_->setStyleSheet("QListWidget { background: #e8f0ea; }");
+    tablesList_->setFont(safeUiFontRegular());
 
-    cbCascadeDel_ = new QCheckBox("Cascade Delete", panel);
-    cbCascadeUpd_ = new QCheckBox("Cascade Update", panel);
+    rightLay->addWidget(new QLabel(tr("Arrastra una tabla al lienzo:"), this));
+    rightLay->addWidget(tablesList_, 1);
 
-    form1->addRow("Left table:", leftTable_);
-    form1->addRow("Left field:", leftField_);
-    form1->addRow("Right table:", rightTable_);
-    form1->addRow("Right field:", rightField_);
-    form1->addRow("Join type:", joinType_);
-    pv->addLayout(form1);
-    pv->addWidget(cbCascadeDel_);
-    pv->addWidget(cbCascadeUpd_);
+    auto* relBox = new QWidget(this);
+    auto* relLay = new QHBoxLayout(relBox);
+    relLay->setContentsMargins(0,0,0,0);
+    relBox->setMaximumHeight(40);
 
-    auto* rowBtns = new QHBoxLayout();
-    btnAdd_ = new QPushButton("Add relation", panel);
-    btnRemove_ = new QPushButton("Remove selected", panel);
-    btnSave_ = new QPushButton("Save", panel);
-    rowBtns->addWidget(btnAdd_);
-    rowBtns->addWidget(btnRemove_);
-    rowBtns->addStretch();
-    rowBtns->addWidget(btnSave_);
-    pv->addLayout(rowBtns);
+    cbRelType_ = new QComboBox(this);
+    cbRelType_->addItems(QStringList() << "1:1" << "1:N" << "N:M");
+    cbRelType_->setMinimumWidth(70);
+    cbRelType_->setFont(safeUiFontRegular());
 
-    grid_ = new QTableWidget(0, 5, panel);
-    grid_->setHorizontalHeaderLabels({"Left","Right","Type","Cascade D","Cascade U"});
-    grid_->horizontalHeader()->setStretchLastSection(true);
-    grid_->verticalHeader()->setVisible(false);
-    grid_->setSelectionBehavior(QAbstractItemView::SelectRows);
-    pv->addWidget(grid_, 1);
+    cbEnforce_    = new QCheckBox(tr("RI"), this);
+    cbCascadeUpd_ = new QCheckBox(tr("CUpd"), this);
+    cbCascadeDel_ = new QCheckBox(tr("CDel"), this);
+    cbEnforce_->setFont(safeUiFontRegular());
+    cbCascadeUpd_->setFont(safeUiFontRegular());
+    cbCascadeDel_->setFont(safeUiFontRegular());
 
-    auto* zoomRow = new QHBoxLayout();
-    auto* bIn = new QPushButton("Zoom +", panel);
-    auto* bOut= new QPushButton("Zoom -", panel);
-    zoomRow->addWidget(bIn); zoomRow->addWidget(bOut); zoomRow->addStretch();
-    pv->addLayout(zoomRow);
-    connect(bIn, &QPushButton::clicked, this, &RelationDesignerPage::zoomIn);
-    connect(bOut,&QPushButton::clicked, this, &RelationDesignerPage::zoomOut);
+    auto* lblTipo = new QLabel(tr("Tipo:"), this);
+    lblTipo->setFont(safeUiFontRegular());
 
-    lay->addWidget(view_, 1);
-    lay->addWidget(panel);
+    relLay->addWidget(lblTipo);
+    relLay->addWidget(cbRelType_);
+    relLay->addSpacing(8);
+    relLay->addWidget(cbEnforce_);
+    relLay->addWidget(cbCascadeUpd_);
+    relLay->addWidget(cbCascadeDel_);
+    rightLay->addWidget(relBox);
 
-    connect(leftTable_,  &QComboBox::currentTextChanged, this, &RelationDesignerPage::onLeftTableChanged);
-    connect(rightTable_, &QComboBox::currentTextChanged, this, &RelationDesignerPage::onRightTableChanged);
-    connect(btnAdd_,     &QPushButton::clicked,          this, &RelationDesignerPage::onAddRelation);
-    connect(btnRemove_,  &QPushButton::clicked,          this, &RelationDesignerPage::onRemoveSelected);
-    connect(btnSave_,    &QPushButton::clicked,          this, &RelationDesignerPage::onSave);
+    auto* btnRow = new QHBoxLayout();
+    btnCreate_ = new QPushButton(tr("Crear relación"), this);
+    btnDelete_ = new QPushButton(tr("Eliminar relación"), this);
+    btnSave_   = new QPushButton(tr("Guardar"), this);
+    for (auto* b : {btnCreate_, btnDelete_, btnSave_}) {
+        b->setMinimumHeight(32);
+        b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        b->setFont(safeUiFontRegular());
+    }
+    btnRow->addWidget(btnCreate_);
+    btnRow->addWidget(btnDelete_);
+    btnRow->addWidget(btnSave_);
+    rightLay->addLayout(btnRow);
+
+    relationsGrid_ = new QTableWidget(this);
+    relationsGrid_->setFont(safeUiFontRegular());
+    relationsGrid_->setColumnCount(9);
+    relationsGrid_->setHorizontalHeaderLabels(
+        { tr("LeftTable"), tr("LeftField"), tr("RightTable"), tr("RightField"),
+         tr("Tipo"), tr("RI"), tr("CUpd"), tr("CDel"), tr("Etiquetas") });
+    relationsGrid_->horizontalHeader()->setStretchLastSection(true);
+    relationsGrid_->verticalHeader()->setVisible(false);
+    relationsGrid_->setSelectionBehavior(QAbstractItemView::SelectRows);
+    relationsGrid_->setSelectionMode(QAbstractItemView::SingleSelection);
+    relationsGrid_->setMinimumHeight(180);
+    relationsGrid_->setMaximumHeight(220);
+    for (int c=0;c<relationsGrid_->columnCount();++c)
+        relationsGrid_->setColumnWidth(c, (c<=3)?95:60);
+    rightLay->addWidget(relationsGrid_, 0);
+
+    splitter->addWidget(leftPane);
+    splitter->addWidget(rightPane);
+    splitter->setStretchFactor(0, 5);
+    splitter->setStretchFactor(1, 1);
+    rightPane->setMaximumWidth(360);
+    root->addWidget(splitter);
+
+    view_->setScene(scene_);
+    scene_->setSceneRect(QRectF(0,0,4000,2500));
+
+    QList<int> sizes; sizes << 1000 << 340; splitter->setSizes(sizes);
+
+    connect(btnCreate_, &QPushButton::clicked, this, &RelationDesignerPage::onBtnCreateRelation);
+    connect(btnDelete_, &QPushButton::clicked, this, &RelationDesignerPage::onBtnDeleteRelation);
+    connect(btnSave_,   &QPushButton::clicked, this, &RelationDesignerPage::onBtnSave);
 }
 
-void RelationDesignerPage::loadTables() {
-    schemas_.clear();
-    leftTable_->clear();
-    rightTable_->clear();
-
-    if (projectDir_.isEmpty()) return;
-    QDir d(projectDir_);
-    const auto metas = d.entryList(QStringList() << "*.meta", QDir::Files, QDir::Name);
+QStringList RelationDesignerPage::allTablesInProject() const {
+    QStringList out;
+    QDir dir(projectDir_);
+    const auto metas = dir.entryList(QStringList() << "*.meta" << "*.meta.json" << "*.meta.bin",
+                                     QDir::Files, QDir::Name);
     for (const auto& m : metas) {
-        QString base = d.absoluteFilePath(m);
+        QFileInfo fi(dir.absoluteFilePath(m));
+        QString base = fi.completeBaseName();
         if (base.endsWith(".meta")) base.chop(5);
-        try {
-            ma::Table t; t.open(base.toStdString());
-            ma::Schema s = t.getSchema();
-            QString name = QString::fromStdString(s.tableName);
-            if (name.trimmed().isEmpty()) {
-                name = QFileInfo(base).completeBaseName();
-            }
-            schemas_.insert(name, s);
-            tableBase_.insert(name, base);
-            leftTable_->addItem(name);
-            rightTable_->addItem(name);
-        } catch (...) {
-        }
+        out << base;
     }
-    if (leftTable_->count()>0) onLeftTableChanged(leftTable_->currentText());
-    if (rightTable_->count()>0) onRightTableChanged(rightTable_->currentText());
+    out.removeDuplicates();
+    return out;
 }
 
-void RelationDesignerPage::layoutNodes() {
-    scene_->clear();
-    qDeleteAll(nodes_); nodes_.clear();
-
-    const int colW = 260;
-    const int rowH = 220;
-    int col = 0, row = 0;
-
-    for (const auto& name : schemas_.keys()) {
-        const auto& s = schemas_[name];
-
-        QRectF rect(0,0,240, 60 + 18*int(s.fields.size()));
-        auto* box = scene_->addRect(rect, QPen(Qt::gray, 1.0), QBrush(Qt::white));
-        box->setFlag(QGraphicsItem::ItemIsMovable, true);
-        box->setFlag(QGraphicsItem::ItemIsSelectable, true);
-
-        auto* title = scene_->addSimpleText(name);
-        title->setFont(titleFont());
-        title->setPos(rect.left()+8, rect.top()+6);
-        title->setParentItem(box);
-
-        const QString basePath = tableBase_.value(name);
-        const QString pkName   = basePath.isEmpty() ? QString() : readPkNameForBase_Rel(basePath);
-
-
-        QMap<QString, QGraphicsSimpleTextItem*> labels;
-        int y = 30;
-
-        const int  iconSize   = 20;
-        const int  padLeft    = 10;
-        const int  gapIconTxt = 0;
-        const qreal textX     = rect.left() + padLeft + iconSize + gapIconTxt;
-
-        for (const auto& f : s.fields) {
-            QString fname = QString::fromStdString(f.name);
-            auto* lbl = scene_->addSimpleText(fname);
-            lbl->setFont(fieldFont());
-           // lbl->setPos(rect.left()+12, rect.top()+y);
-            lbl->setPos(textX, rect.top() + y);
-            lbl->setParentItem(box);
-            labels.insert(fname, lbl);
-
-            if (!pkName.isEmpty() && fname.compare(pkName, Qt::CaseInsensitive) == 0) {
-                QIcon ic(":/icons/icons/pk_black.svg");
-                QPixmap pm = ic.pixmap(QSize(iconSize, iconSize));
-
-                auto* pix = scene_->addPixmap(pm);
-                const qreal iconX = rect.left() + padLeft;
-                const qreal iconY = lbl->pos().y() + lbl->boundingRect().height()/2.0 - pm.height()/2.0;
-                pix->setPos(iconX, iconY);
-                pix->setParentItem(box);
-            }
-
-            y += 20;
-        }
-
-        box->setPos(col*colW + 40, row*rowH + 40);
-
-        Node* n = new Node{ name, box, labels };
-        nodes_.insert(name, n);
-
-        col++;
-        if (col>=2) { col=0; row++; }
+QStringList RelationDesignerPage::fieldsForTable(const QString& table) {
+    if (!schemas_.contains(table)) {
+        schemas_.insert(table, meta::readTableMeta(projectDir_, table));
     }
+    const auto& tm = schemas_[table];
+    auto names = meta::fieldNames(tm);
+    if (names.isEmpty()) names = QStringList() << "ID" << "Campo1" << "Campo2";
+    return names;
 }
 
-void RelationDesignerPage::onLeftTableChanged(const QString& t) {
-    rebuildFieldsFor(t, leftField_);
-}
-void RelationDesignerPage::onRightTableChanged(const QString& t) {
-    rebuildFieldsFor(t, rightField_);
-}
-
-void RelationDesignerPage::rebuildFieldsFor(const QString& table, QComboBox* fieldCombo) {
-    fieldCombo->clear();
-    if (!schemas_.contains(table)) return;
-    const auto& s = schemas_[table];
-    for (const auto& f : s.fields) {
-        fieldCombo->addItem(QString::fromStdString(f.name));
+QString RelationDesignerPage::primaryKeyForTable(const QString& table) {
+    if (!schemas_.contains(table)) {
+        schemas_.insert(table, meta::readTableMeta(projectDir_, table));
     }
+    const auto& tm = schemas_[table];
+    if (!tm.pkName.isEmpty()) return tm.pkName;
+    return QString();
 }
 
-void RelationDesignerPage::onAddRelation() {
-    if (leftTable_->currentText().isEmpty() || rightTable_->currentText().isEmpty() ||
-        leftField_->currentText().isEmpty() || rightField_->currentText().isEmpty()) {
-        QMessageBox::information(this, "Relation", "Please select both tables and fields.");
+quint16 RelationDesignerPage::typeIdFor(const QString& table, const QString& field) {
+    if (!schemas_.contains(table)) {
+        schemas_.insert(table, meta::readTableMeta(projectDir_, table));
+    }
+    const auto& tm = schemas_[table];
+    return meta::fieldTypeId(tm, field);
+}
+
+void RelationDesignerPage::addTableBoxAt(const QString& table, const QPointF& scenePos) {
+    if (table.isEmpty()) return;
+    if (boxes_.contains(table)) { boxes_[table]->setPos(scenePos); return; }
+
+    const auto names = fieldsForTable(table);
+    const auto pk    = primaryKeyForTable(table);
+
+    auto* box = new TableBox(this, table, names, pk);
+    box->setPos(scenePos);
+    scene_->addItem(box);
+    boxes_.insert(table, box);
+}
+
+void RelationDesignerPage::onFieldClicked(FieldItem* fi) {
+    if (fi->isPicked()) {
+        fi->setPicked(false);
+        selected_.removeAll(fi);
         return;
     }
-    Rel r;
-    r.lt = leftTable_->currentText();
-    r.lf = leftField_->currentText();
-    r.rt = rightTable_->currentText();
-    r.rf = rightField_->currentText();
-    r.type = joinType_->currentText();
-    r.cascadeDel = cbCascadeDel_->isChecked();
-    r.cascadeUpd = cbCascadeUpd_->isChecked();
+    for (auto* other : selected_) {
+        if (other->table() == fi->table()) {
+            other->setPicked(false);
+            selected_.removeAll(other);
+            break;
+        }
+    }
+    if (selected_.size() >= 2) {
+        auto* oldest = selected_.front();
+        oldest->setPicked(false);
+        selected_.pop_front();
+    }
+    fi->setPicked(true);
+    selected_.push_back(fi);
+}
 
-    for (const auto& e : relations_) {
-        if (e.lt==r.lt && e.lf==r.lf && e.rt==r.rt && e.rf==r.rf) {
-            QMessageBox::information(this, "Relation", "That relation already exists.");
+void RelationDesignerPage::clearFieldSelection() {
+    for (auto* box : boxes_) for (auto* f : box->fieldItems()) f->setPicked(false);
+    selected_.clear();
+}
+
+RelationDesignerPage::FieldItem* RelationDesignerPage::pickFirstSelected() const {
+    return selected_.size() >= 1 ? selected_[0] : nullptr;
+}
+RelationDesignerPage::FieldItem* RelationDesignerPage::pickSecondSelected() const {
+    return selected_.size() >= 2 ? selected_[1] : nullptr;
+}
+
+int RelationDesignerPage::findRelationIndex(const QString& lt, const QString& lf,
+                                            const QString& rt, const QString& rf,
+                                            const QString& type) const {
+    for (int i=0;i<relations_.size();++i) {
+        const auto& r = relations_[i];
+        if (r.leftTable==lt && r.leftField==lf && r.rightTable==rt && r.rightField==rf && r.relType==type)
+            return i;
+    }
+    return -1;
+}
+
+bool RelationDesignerPage::canFormRelation(const QString& type, const QString& lt, const QString& lf,
+                                           const QString& rt, const QString& rf, QString& whyNot) const {
+    if (!boxes_.contains(lt) || !boxes_.contains(rt)) { whyNot = tr("Ambas tablas deben estar en el lienzo."); return false; }
+    if (lt == rt) { whyNot = tr("Las relaciones deben ser entre tablas distintas."); return false; }
+    if (lt == rt && lf == rf) { whyNot = tr("No puedes relacionar un campo consigo mismo."); return false; }
+
+    auto* self = const_cast<RelationDesignerPage*>(this);
+    if (!self->schemas_.contains(lt)) self->schemas_.insert(lt, meta::readTableMeta(projectDir_, lt));
+    if (!self->schemas_.contains(rt)) self->schemas_.insert(rt, meta::readTableMeta(projectDir_, rt));
+
+    const quint16 tL = self->typeIdFor(lt, lf);
+    const quint16 tR = self->typeIdFor(rt, rf);
+    if (tL != 0xFFFF && tR != 0xFFFF && tL != tR) {
+        whyNot = tr("Tipos incompatibles entre %1.%2 (typeId=%3) y %4.%5 (typeId=%6).")
+        .arg(lt, lf).arg(tL).arg(rt, rf).arg(tR);
+        return false;
+    }
+
+    const QString pkRight = self->primaryKeyForTable(rt);
+    if (type == "1:N") {
+        if (rf != pkRight) { whyNot = tr("En 1:N el campo del lado derecho debe ser la PK del padre."); return false; }
+    } else if (type == "1:1") {
+        if (rf != pkRight) { whyNot = tr("En 1:1 el campo del lado derecho debe ser PK."); return false; }
+    } else if (type == "N:M") {
+    }
+    return true;
+}
+
+void RelationDesignerPage::updateRelationGeometry(VisualRelation& vr) {
+    if (!vr.leftItem || !vr.rightItem) return;
+
+    auto* boxL = boxes_.value(vr.leftTable, nullptr);
+    auto* boxR = boxes_.value(vr.rightTable, nullptr);
+    if (!boxL || !boxR) return;
+
+    const QPointF pL = boxL->scenePos() + vr.leftItem->pos()  + QPointF(120, 11);
+    const QPointF pR = boxR->scenePos() + vr.rightItem->pos() + QPointF(120, 11);
+
+    if (!vr.line) vr.line = scene_->addLine(QLineF(pL,pR), QPen(Qt::darkGray, 1.6));
+    else          vr.line->setLine(QLineF(pL, pR));
+
+    if (!vr.labelLeft)  vr.labelLeft  = scene_->addText("", safeUiFontBold());
+    if (!vr.labelRight) vr.labelRight = scene_->addText("", safeUiFontBold());
+
+    QString labL = "1", labR = "1";
+    if (vr.relType == "1:N") { labL = "N"; labR = "1"; }
+    else if (vr.relType == "N:M") { labL = "N"; labR = "N"; }
+
+    vr.labelLeft->setPlainText(labL);
+    vr.labelRight->setPlainText(labR);
+    vr.labelLeft->setDefaultTextColor(Qt::black);
+    vr.labelRight->setDefaultTextColor(Qt::black);
+    vr.labelLeft->setPos(pL + QPointF(-6, -18));
+    vr.labelRight->setPos(pR + QPointF(-6, -18));
+}
+
+void RelationDesignerPage::updateRelationsForTable(const QString& tableName) {
+    for (auto& vr : relations_) {
+        if (vr.leftTable == tableName || vr.rightTable == tableName) {
+            updateRelationGeometry(vr);
+        }
+    }
+}
+
+void RelationDesignerPage::drawRelation(VisualRelation& vr) {
+    updateRelationGeometry(vr);
+}
+
+void RelationDesignerPage::addRelationToGrid(const VisualRelation& vr) {
+    const int row = relationsGrid_->rowCount();
+    relationsGrid_->insertRow(row);
+
+    auto mkItem = [&](const QString& s){ auto* it = new QTableWidgetItem(s); it->setFlags(it->flags() ^ Qt::ItemIsEditable); return it; };
+    auto mkChk  = [&](bool v){ auto* it = new QTableWidgetItem(); it->setFlags(it->flags() | Qt::ItemIsUserCheckable); it->setCheckState(v?Qt::Checked:Qt::Unchecked); return it; };
+
+    relationsGrid_->setItem(row, 0, mkItem(vr.leftTable));
+    relationsGrid_->setItem(row, 1, mkItem(vr.leftField));
+    relationsGrid_->setItem(row, 2, mkItem(vr.rightTable));
+    relationsGrid_->setItem(row, 3, mkItem(vr.rightField));
+    relationsGrid_->setItem(row, 4, mkItem(vr.relType));
+    relationsGrid_->setItem(row, 5, mkChk(vr.enforceRI));
+    relationsGrid_->setItem(row, 6, mkChk(vr.cascadeUpdate));
+    relationsGrid_->setItem(row, 7, mkChk(vr.cascadeDelete));
+
+    QString labels = (vr.relType=="1:N") ? "N ↔ 1" : (vr.relType=="N:M") ? "N ↔ N" : "1 ↔ 1";
+    relationsGrid_->setItem(row, 8, mkItem(labels));
+}
+
+void RelationDesignerPage::removeRelationVisualOnly(int idx) {
+    if (idx < 0 || idx >= relations_.size()) return;
+    auto& vr = relations_[idx];
+    if (vr.labelLeft)  { scene_->removeItem(vr.labelLeft);  delete vr.labelLeft;  vr.labelLeft=nullptr; }
+    if (vr.labelRight) { scene_->removeItem(vr.labelRight); delete vr.labelRight; vr.labelRight=nullptr; }
+    if (vr.line)       { scene_->removeItem(vr.line);       delete vr.line;       vr.line=nullptr; }
+}
+
+void RelationDesignerPage::onBtnCreateRelation() {
+    auto* a = pickFirstSelected();
+    auto* b = pickSecondSelected();
+
+    if (!a || !b) {
+        QMessageBox::information(this, tr("Relaciones"),
+                                 tr("Selecciona un campo de una tabla y un campo de otra (máx. 2)."));
+        return;
+    }
+    if (a->table() == b->table()) {
+        QMessageBox::warning(this, tr("Relaciones"), tr("Debe ser entre tablas distintas."));
+        return;
+    }
+
+    QString type = cbRelType_->currentText();
+
+    FieldItem *left = a, *right = b;
+    if ((a->isPk() && !b->isPk()) || (!a->isPk() && b->isPk())) {
+        if (a->isPk()) { left=b; right=a; } else { left=a; right=b; }
+    }
+
+    QString why;
+    if (!canFormRelation(type, left->table(), left->name(), right->table(), right->name(), why)) {
+        QMessageBox::warning(this, tr("Relaciones"), why);
+        return;
+    }
+
+    if (type == "N:M") {
+        QString junction, fkA, fkB;
+        if (!ensureJunctionTable(left->table(), right->table(), junction, fkA, fkB)) {
+            QMessageBox::critical(this, tr("Relaciones"), tr("No se pudo crear la tabla intermedia."));
             return;
         }
+
+        auto* boxA = boxes_.value(left->table(),  nullptr);
+        auto* boxB = boxes_.value(right->table(), nullptr);
+        QPointF pos = (boxA && boxB) ? (boxA->pos() + (boxB->pos()-boxA->pos())*0.5 + QPointF(60,20))
+                                     : QPointF(100,100);
+        addTableBoxAt(junction, pos);
+
+        VisualRelation r1;
+        r1.leftTable  = junction;
+        r1.leftField  = fkA;
+        r1.rightTable = left->table();
+        r1.rightField = primaryKeyForTable(left->table());
+        r1.relType    = "1:N";
+        r1.enforceRI     = cbEnforce_->isChecked();
+        r1.cascadeUpdate = cbCascadeUpd_->isChecked();
+        r1.cascadeDelete = cbCascadeDel_->isChecked();
+
+        VisualRelation r2;
+        r2.leftTable  = junction;
+        r2.leftField  = fkB;
+        r2.rightTable = right->table();
+        r2.rightField = primaryKeyForTable(right->table());
+        r2.relType    = "1:N";
+        r2.enforceRI     = cbEnforce_->isChecked();
+        r2.cascadeUpdate = cbCascadeUpd_->isChecked();
+        r2.cascadeDelete = cbCascadeDel_->isChecked();
+
+        auto* boxJ = boxes_.value(junction, nullptr);
+        auto findFieldItem = [](TableBox* box, const QString& name)->FieldItem*{
+            if (!box) return nullptr;
+            for (auto* f : box->fieldItems()) if (f->name()==name) return f;
+            return nullptr;
+        };
+        r1.leftItem  = findFieldItem(boxJ,   r1.leftField);
+        r1.rightItem = findFieldItem(boxA,   r1.rightField);
+        r2.leftItem  = findFieldItem(boxJ,   r2.leftField);
+        r2.rightItem = findFieldItem(boxB,   r2.rightField);
+
+        drawRelation(r1); relations_.push_back(r1); addRelationToGrid(r1);
+        drawRelation(r2); relations_.push_back(r2); addRelationToGrid(r2);
+
+        clearFieldSelection();
+        return;
     }
-    addRelation(r);
-}
 
-void RelationDesignerPage::addRelation(const Rel& r) {
-    relations_.push_back(r);
+    VisualRelation vr;
+    vr.leftTable  = left->table();
+    vr.leftField  = left->name();
+    vr.rightTable = right->table();
+    vr.rightField = right->name();
+    vr.relType    = type;
+    vr.enforceRI     = cbEnforce_->isChecked();
+    vr.cascadeUpdate = cbCascadeUpd_->isChecked();
+    vr.cascadeDelete = cbCascadeDel_->isChecked();
+    vr.leftItem  = left;
+    vr.rightItem = right;
 
-    int row = grid_->rowCount();
-    grid_->insertRow(row);
-    grid_->setItem(row, 0, new QTableWidgetItem(r.lt + "." + r.lf));
-    grid_->setItem(row, 1, new QTableWidgetItem(r.rt + "." + r.rf));
-    grid_->setItem(row, 2, new QTableWidgetItem(r.type));
-    grid_->setItem(row, 3, new QTableWidgetItem(r.cascadeDel ? "Yes":"No"));
-    grid_->setItem(row, 4, new QTableWidgetItem(r.cascadeUpd ? "Yes":"No"));
-
-    auto p1 = fieldAnchor(r.lt, r.lf);
-    auto p2 = fieldAnchor(r.rt, r.rf);
-
-    QPainterPath path;
-    const qreal dx = (p2.x() - p1.x()) * 0.3;
-    path.moveTo(p1);
-    path.cubicTo(p1 + QPointF(dx, 0), p2 - QPointF(dx, 0), p2);
-
-    auto* link = scene_->addPath(path, QPen(QColor(15,143,102), 2.0));
-    relations_.back().link = link;
-}
-
-void RelationDesignerPage::onRemoveSelected() {
-    auto sel = grid_->selectionModel()->selectedRows();
-    if (sel.isEmpty()) return;
-    std::sort(sel.begin(), sel.end(), [](const QModelIndex& a, const QModelIndex& b){ return a.row()>b.row(); });
-    for (const auto& idx : sel) removeRelationAtRow(idx.row());
-}
-
-void RelationDesignerPage::removeRelationAtRow(int row) {
-    if (row<0 || row>=relations_.size()) return;
-    if (relations_[row].link) {
-        scene_->removeItem(relations_[row].link);
-        delete relations_[row].link;
-        relations_[row].link = nullptr;
+    if (findRelationIndex(vr.leftTable, vr.leftField, vr.rightTable, vr.rightField, vr.relType) >= 0) {
+        QMessageBox::information(this, tr("Relaciones"), tr("Esa relación ya existe."));
+        return;
     }
+
+    drawRelation(vr);
+    relations_.push_back(vr);
+    addRelationToGrid(vr);
+
+    clearFieldSelection();
+}
+
+void RelationDesignerPage::onBtnDeleteRelation() {
+    const int row = relationsGrid_->currentRow();
+    if (row < 0 || row >= relations_.size()) return;
+    removeRelationVisualOnly(row);
+    relationsGrid_->removeRow(row);
     relations_.remove(row);
-    grid_->removeRow(row);
 }
 
-void RelationDesignerPage::onSave() {
-    saveToJson();
-    QMessageBox::information(this, "Relations", "Relations saved.");
-}
-
-QString RelationDesignerPage::jsonPath() const {
-    return QDir(projectDir_).filePath("relations.json");
-}
-
-void RelationDesignerPage::saveToJson() {
-    QJsonObject root; root["version"] = 1;
-
-    QJsonArray jnodes;
-    for (auto it = nodes_.cbegin(); it != nodes_.cend(); ++it) {
-        const Node* n = it.value();
-        if (!n || !n->box) continue;
-        QJsonObject jn;
-        jn["table"] = n->table;
-        jn["x"] = n->box->pos().x();
-        jn["y"] = n->box->pos().y();
-        jnodes.push_back(jn);
-    }
-    root["nodes"] = jnodes;
-
-    QJsonArray jrels;
-    for (const auto& r : relations_) {
-        QJsonObject jr;
-        jr["leftTable"]  = r.lt;
-        jr["leftField"]  = r.lf;
-        jr["rightTable"] = r.rt;
-        jr["rightField"] = r.rf;
-        jr["type"]       = r.type;
-        jr["cascadeDelete"] = r.cascadeDel;
-        jr["cascadeUpdate"] = r.cascadeUpd;
-        jrels.push_back(jr);
-    }
-    root["relations"] = jrels;
-
-    QFile f(jsonPath());
-    if (f.open(QIODevice::WriteOnly)) {
-        f.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
-        f.close();
-    }
-}
-
-void RelationDesignerPage::loadFromJson() {
-    QFile f(jsonPath());
-    if (!f.exists()) return;
-    if (!f.open(QIODevice::ReadOnly)) return;
-    auto doc = QJsonDocument::fromJson(f.readAll());
-    f.close();
-    if (!doc.isObject()) return;
-
-    auto root = doc.object();
-
-    if (root.contains("nodes") && root["nodes"].isArray()) {
-        auto arr = root["nodes"].toArray();
-        for (const auto& v : arr) {
-            auto o = v.toObject();
-            QString t = o["table"].toString();
-            if (!nodes_.contains(t)) continue;
-            auto* n = nodes_[t];
-            qreal x = o["x"].toDouble(n->box->pos().x());
-            qreal y = o["y"].toDouble(n->box->pos().y());
-            n->box->setPos(QPointF(x,y));
-        }
-    }
-
-    if (root.contains("relations") && root["relations"].isArray()) {
-        auto arr = root["relations"].toArray();
-        for (const auto& v : arr) {
-            auto o = v.toObject();
-            Rel r;
-            r.lt = o["leftTable"].toString();
-            r.lf = o["leftField"].toString();
-            r.rt = o["rightTable"].toString();
-            r.rf = o["rightField"].toString();
-            r.type = o["type"].toString("INNER");
-            r.cascadeDel = o["cascadeDelete"].toBool(false);
-            r.cascadeUpd = o["cascadeUpdate"].toBool(false);
-
-            if (!nodes_.contains(r.lt) || !nodes_.contains(r.rt)) continue;
-            if (!schemas_.contains(r.lt) || !schemas_.contains(r.rt)) continue;
-            bool lfOk=false, rfOk=false;
-            for (const auto& f : schemas_[r.lt].fields) if (QString::fromStdString(f.name)==r.lf) { lfOk=true; break; }
-            for (const auto& f : schemas_[r.rt].fields) if (QString::fromStdString(f.name)==r.rf) { rfOk=true; break; }
-            if (!lfOk || !rfOk) continue;
-
-            addRelation(r);
-        }
-    }
-    redrawAllLinks();
-}
-
-QPointF RelationDesignerPage::fieldAnchor(const QString& table, const QString& field) const {
-    auto itN = nodes_.find(table);
-    if (itN == nodes_.end()) return QPointF();
-    const Node* n = itN.value();
-    if (!n || !n->box) return QPointF();
-    auto itL = n->fieldLabels.find(field);
-    if (itL == n->fieldLabels.end()) {
-        return n->box->sceneBoundingRect().center();
-    }
-    return itL.value()->sceneBoundingRect().center();
-}
-
-void RelationDesignerPage::redrawAllLinks() {
-    for (auto& r : relations_) {
-        if (!r.link) continue;
-        auto p1 = fieldAnchor(r.lt, r.lf);
-        auto p2 = fieldAnchor(r.rt, r.rf);
-        QPainterPath path;
-        const qreal dx = (p2.x() - p1.x()) * 0.3;
-        path.moveTo(p1);
-        path.cubicTo(p1 + QPointF(dx, 0), p2 - QPointF(dx, 0), p2);
-        r.link->setPath(path);
-    }
-}
-
-void RelationDesignerPage::onSceneChanged() {
-    redrawAllLinks();
-}
-
-void RelationDesignerPage::zoomIn()  { view_->scale(1.1, 1.1); }
-void RelationDesignerPage::zoomOut() { view_->scale(0.9, 0.9); }
-
-void RelationDesignerPage::saveRelations() {
-    QJsonArray arr;
-    for (const auto& r : relations_) {
-        QJsonObject o;
-        o["lt"] = r.lt;
-        o["lf"] = r.lf;
-        o["rt"] = r.rt;
-        o["rf"] = r.rf;
-        o["type"] = r.type;
-        o["cascadeDelete"] = r.cascadeDel;
-        o["cascadeUpdate"] = r.cascadeUpd;
-        arr.push_back(o);
-    }
-    QJsonDocument doc(arr);
-
-    const QString path = QDir::current().filePath("relations.json");
-    QFile f(path);
-    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        QMessageBox::warning(this, "Relations", "Cannot write relations.json");
+void RelationDesignerPage::onBtnSave() {
+    if (!saveToJsonV2()) {
+        QMessageBox::critical(this, tr("Relaciones"), tr("No se pudo guardar relations.json"));
         return;
     }
-    f.write(doc.toJson(QJsonDocument::Indented));
-    f.close();
-    QMessageBox::information(this, "Relations", "Relations saved.");
+    QMessageBox::information(this, tr("Relaciones"), tr("Relaciones guardadas."));
 }
 
-void RelationDesignerPage::loadRelations() {
-    relations_.clear();
+bool RelationDesignerPage::writeMetaUtf8Len(const QString& tableName,
+                                            const QVector<meta::FieldInfo>& fields)
+{
+    const QString metaPath = QDir(projectDir_).filePath(tableName + ".meta");
+    QFile f(metaPath);
+    if (!f.open(QIODevice::WriteOnly)) return false;
 
-    const QString path = QDir::current().filePath("relations.json");
-    QFile f(path);
-    if (!f.exists()) return;
-    if (!f.open(QIODevice::ReadOnly)) {
-        QMessageBox::warning(this, "Relations", "Cannot read relations.json");
-        return;
+    QDataStream ds(&f);
+    ds.setByteOrder(QDataStream::LittleEndian);
+
+    quint32 magic = 0x4D455431u;
+    quint16 ver   = 1;
+    ds << magic << ver;
+
+    const QByteArray tbytes = tableName.toUtf8();
+    quint16 tlen = static_cast<quint16>(qMin<int>(tbytes.size(), 65535));
+    ds << tlen;
+    if (tlen > 0) ds.writeRawData(tbytes.constData(), tlen);
+
+    quint16 n = static_cast<quint16>(qMin<int>(fields.size(), 65535));
+    ds << n;
+
+    for (quint16 i=0;i<n;++i) {
+        const auto& fi = fields[i];
+        const QByteArray fb = fi.name.toUtf8();
+        quint16 flen = static_cast<quint16>(qMin<int>(fb.size(), 65535));
+        ds << flen;
+        if (flen > 0) ds.writeRawData(fb.constData(), flen);
+
+        quint8  t = static_cast<quint8>(fi.typeId & 0xFF);
+        quint16 s = fi.size;
+        ds << t << s;
     }
-    const auto doc = QJsonDocument::fromJson(f.readAll());
+
     f.close();
+    schemas_.insert(tableName, meta::readTableMeta(projectDir_, tableName));
+    return true;
+}
 
-    const auto arr = doc.array();
-    for (const auto& v : arr) {
-        const auto o = v.toObject();
-        Rel r;
-        r.lt = o.value("lt").toString();
-        r.lf = o.value("lf").toString();
-        r.rt = o.value("rt").toString();
-        r.rf = o.value("rf").toString();
-        r.type = o.value("type").toString();
-        r.cascadeDel = o.value("cascadeDelete").toBool();
-        r.cascadeUpd = o.value("cascadeUpdate").toBool();
-        r.link = nullptr;
-        relations_.push_back(r);
+bool RelationDesignerPage::ensureJunctionTable(const QString& aTable, const QString& bTable,
+                                               QString& junctionName,
+                                               QString& fkAName, QString& fkBName)
+{
+    const QString pkA = primaryKeyForTable(aTable);
+    const QString pkB = primaryKeyForTable(bTable);
+    if (pkA.isEmpty() || pkB.isEmpty()) return false;
+
+    const quint16 tA = typeIdFor(aTable, pkA);
+    const quint16 tB = typeIdFor(bTable, pkB);
+    const quint16 sA = 0;
+    const quint16 sB = 0;
+
+    junctionName = aTable + "_" + bTable + "_link";
+    fkAName      = aTable + "_" + pkA;
+    fkBName      = bTable + "_" + pkB;
+
+    const QString metaPath = QDir(projectDir_).filePath(junctionName + ".meta");
+    if (!QFile::exists(metaPath)) {
+        QVector<meta::FieldInfo> fields;
+        meta::FieldInfo f1; f1.name = fkAName; f1.typeId = tA; f1.size = sA;
+        meta::FieldInfo f2; f2.name = fkBName; f2.typeId = tB; f2.size = sB;
+        fields << f1 << f2;
+
+        if (!writeMetaUtf8Len(junctionName, fields)) return false;
     }
-    redrawAllLinks();
+
+    return true;
+}
+
+QString RelationDesignerPage::jsonPath() const { return QDir(projectDir_).filePath("relations.json"); }
+bool RelationDesignerPage::migrateJsonIfNeeded() const { return migrateRelationsToV2(jsonPath()); }
+
+bool RelationDesignerPage::saveToJsonV2() const {
+    QJsonObject root; root.insert("version", 2);
+
+    QJsonArray nodesArr;
+    for (auto it = boxes_.cbegin(); it != boxes_.cend(); ++it) {
+        const auto* box = it.value();
+        const QPointF p = box->pos();
+        QJsonObject o; o.insert("table", it.key()); o.insert("x", p.x()); o.insert("y", p.y());
+        nodesArr.push_back(o);
+    }
+    root.insert("nodes", nodesArr);
+
+    QJsonArray rels;
+    for (const auto& vr : relations_) {
+        QJsonObject r;
+        r.insert("leftTable", vr.leftTable);
+        r.insert("leftField", vr.leftField);
+        r.insert("rightTable", vr.rightTable);
+        r.insert("rightField", vr.rightField);
+        r.insert("relType",   vr.relType);
+        r.insert("enforceRI", vr.enforceRI);
+        r.insert("cascadeUpdate", vr.cascadeUpdate);
+        r.insert("cascadeDelete", vr.cascadeDelete);
+        rels.push_back(r);
+    }
+    root.insert("relations", rels);
+
+    return writeRelationsV2(jsonPath(), root);
+}
+
+bool RelationDesignerPage::loadFromJsonV2() {
+    QJsonObject root; if (!readRelationsV2Object(jsonPath(), root)) return false;
+
+    const auto nodes = root.value("nodes").toArray();
+    for (const auto& v : nodes) {
+        const QJsonObject o = v.toObject();
+        const QString table = o.value("table").toString();
+        const qreal x = o.value("x").toDouble(50.0);
+        const qreal y = o.value("y").toDouble(50.0);
+        if (!allTablesInProject().contains(table)) continue;
+        addTableBoxAt(table, QPointF(x, y));
+    }
+
+    const auto rels = root.value("relations").toArray();
+    for (const auto& v : rels) {
+        const auto o  = v.toObject();
+        VisualRelation vr;
+        vr.leftTable  = o.value("leftTable").toString();
+        vr.leftField  = o.value("leftField").toString();
+        vr.rightTable = o.value("rightTable").toString();
+        vr.rightField = o.value("rightField").toString();
+        vr.relType    = o.value("relType").toString("1:N");
+        vr.enforceRI  = o.value("enforceRI").toBool(false);
+        vr.cascadeUpdate = o.value("cascadeUpdate").toBool(false);
+        vr.cascadeDelete = o.value("cascadeDelete").toBool(false);
+
+        auto* boxL = boxes_.value(vr.leftTable, nullptr);
+        auto* boxR = boxes_.value(vr.rightTable, nullptr);
+        if (!boxL || !boxR) continue;
+        for (auto* f : boxL->fieldItems()) if (f->name()==vr.leftField)  vr.leftItem = f;
+        for (auto* f : boxR->fieldItems()) if (f->name()==vr.rightField) vr.rightItem = f;
+        if (!vr.leftItem || !vr.rightItem) continue;
+
+        drawRelation(vr);
+        relations_.push_back(vr);
+        addRelationToGrid(vr);
+    }
+    return true;
+}
+
+void RelationDesignerPage::loadTablesList() {
+    if (!tablesList_) return;
+
+    tablesList_->clear();
+
+    const auto tables = allTablesInProject();
+    for (const auto& t : tables) {
+        auto* it = new QListWidgetItem(t);
+        it->setData(Qt::UserRole, t);
+        tablesList_->addItem(it);
+    }
+
+    tablesList_->viewport()->setAcceptDrops(false);
+    tablesList_->setDragEnabled(true);
+    tablesList_->setDefaultDropAction(Qt::IgnoreAction);
+    tablesList_->setDragDropMode(QAbstractItemView::DragOnly);
+    tablesList_->setSelectionMode(QAbstractItemView::SingleSelection);
 }

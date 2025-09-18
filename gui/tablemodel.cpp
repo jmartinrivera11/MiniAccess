@@ -7,6 +7,7 @@
 #include <optional>
 #include <cstdint>
 #include "../core/DisplayFmt.h"
+#include "../core/relations_io.h"
 #include <climits>
 #include <algorithm>
 #include <QFile>
@@ -28,6 +29,8 @@ struct Relation {
     QString parentField;
     bool cascadeDelete{false};
     bool cascadeUpdate{false};
+    QString relType;
+    bool enforceRI{true};
 };
 
 static inline QString projectDirFromBase(const QString& basePath) {
@@ -48,24 +51,34 @@ static QString loadPrimaryKeyNameForBase(const QString& basePath) {
 
 static QVector<Relation> loadAllRelationsInProjectForBase(const QString& basePath) {
     QVector<Relation> out;
-    const QString relPath = QDir(projectDirFromBase(basePath)).filePath("relations.json");
-    QFile f(relPath);
-    if (!f.exists() || !f.open(QIODevice::ReadOnly)) return out;
 
-    const auto arr = QJsonDocument::fromJson(f.readAll()).array();
+    const QString projectDir = QFileInfo(basePath).dir().absolutePath();
+    const QString path = QDir(projectDir).filePath("relations.json");
+
+    migrateRelationsToV2(path);
+
+    const QJsonArray arr = loadRelationsArrayFlexible(path);
+    out.reserve(arr.size());
+
     for (const auto& v : arr) {
-        const auto o = v.toObject();
+        const auto o  = v.toObject();
+        const auto lt = o.value("leftTable").toString(o.value("lt").toString());
+        const auto lf = o.value("leftField").toString(o.value("lf").toString());
+        const auto rt = o.value("rightTable").toString(o.value("rt").toString());
+        const auto rf = o.value("rightField").toString(o.value("rf").toString());
+        if (lt.isEmpty() || lf.isEmpty() || rt.isEmpty() || rf.isEmpty()) continue;
+
         Relation r;
-        r.childName     = o.value("lt").toString();
-        r.childField    = o.value("lf").toString();
-        r.parentName    = o.value("rt").toString();
-        r.parentField   = o.value("rf").toString();
-        r.cascadeDelete = o.value("cascadeDelete").toBool();
-        r.cascadeUpdate = o.value("cascadeUpdate").toBool();
-        if (!r.childName.isEmpty() && !r.childField.isEmpty() &&
-            !r.parentName.isEmpty() && !r.parentField.isEmpty()) {
-            out.push_back(r);
-        }
+        r.childName     = lt;
+        r.childField    = lf;
+        r.parentName    = rt;
+        r.parentField   = rf;
+        r.cascadeUpdate = o.value("cascadeUpdate").toBool(false);
+        r.cascadeDelete = o.value("cascadeDelete").toBool(false);
+        r.relType       = o.value("relType").toString("1:N");
+        r.enforceRI     = o.value("enforceRI").toBool(true);
+
+        out.push_back(r);
     }
     return out;
 }
@@ -205,6 +218,47 @@ static inline QString boolLabel(bool v, uint16_t fmt) {
     case FMT_BOOL_TRUEFALSE:
     default:                 return v ? "True" : "False";
     }
+}
+
+static bool columnValueWouldBeUnique(const std::vector<ma::Record>& cache, int col,
+                                     const std::optional<ma::Value>& candidate, int skipRow)
+{
+    if (!candidate.has_value()) return false;
+    for (int r=0; r<(int)cache.size(); ++r) {
+        if (r == skipRow) continue;
+        if (valuesEqual(cache[r].values[col], candidate)) return false;
+    }
+    return true;
+}
+
+static bool detectJunctionForThisTable(const QString& basePath, QString& fkAField, QString& fkBField) {
+    const auto relsChild = relationsWhereBaseIsChild(basePath);
+    QString f1, f2; QString p1, p2; int count = 0;
+    for (const auto& r : relsChild) {
+        const QString t = r.relType.isEmpty() ? "1:N" : r.relType;
+        if (t == "1:N") {
+            if (count == 0) { f1 = r.childField; p1 = r.parentName; count = 1; }
+            else if (count == 1 && r.childField != f1 && r.parentName != p1) { f2 = r.childField; p2 = r.parentName; count = 2; break; }
+        }
+    }
+    if (count == 2) { fkAField = f1; fkBField = f2; return true; }
+    return false;
+}
+
+static bool pairExistsInCache(const std::vector<ma::Record>& cache,
+                              int colA, const std::optional<ma::Value>& aVal,
+                              int colB, const std::optional<ma::Value>& bVal,
+                              int skipRow)
+{
+    if (!aVal.has_value() || !bVal.has_value()) return false;
+    for (int r=0; r<(int)cache.size(); ++r) {
+        if (r == skipRow) continue;
+        if (valuesEqual(cache[r].values[colA], aVal) &&
+            valuesEqual(cache[r].values[colB], bVal)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 TableModel::TableModel(Table* table, QObject* parent)
@@ -529,6 +583,20 @@ bool TableModel::setData(const QModelIndex& idx, const QVariant& v, int role) {
 
     if (role != Qt::EditRole) return false;
 
+    auto fromVariant = [&](int fieldIndex, const QVariant& qv)->ma::Value {
+        const auto& ff = schema_.fields[fieldIndex];
+        switch (ff.type) {
+        case ma::FieldType::Int32:   return qv.toInt();
+        case ma::FieldType::Double:  return qv.toDouble();
+        case ma::FieldType::Bool:    return (qv.typeId()==QMetaType::Bool) ? qv.toBool() : (qv.toInt()!=0);
+        case ma::FieldType::String:
+        case ma::FieldType::CharN:   return qv.toString().toStdString();
+        case ma::FieldType::Date:    return (long long)qv.toLongLong();
+        case ma::FieldType::Currency:return qv.toDouble();
+        default:                     return qv.toString().toStdString();
+        }
+    };
+
     ma::Value newVal = fromVariant(col, v);
     const bool setNull =
         (v.typeId() == QMetaType::QString && v.toString().trimmed().isEmpty()) || !v.isValid();
@@ -546,7 +614,34 @@ bool TableModel::setData(const QModelIndex& idx, const QVariant& v, int role) {
         const int fkCol = fieldIndexByName(schema_, rel.childField);
         if (fkCol == col) {
             if (setNull) return false;
-            if (!valueExistsInParent(basePath_, rel, newVal)) return false;
+            if (rel.enforceRI) {
+                if (!valueExistsInParent(basePath_, rel, newVal)) return false;
+            }
+            const QString t = rel.relType.isEmpty() ? "1:N" : rel.relType;
+            if (t == "1:1") {
+                if (!columnValueWouldBeUnique(cache_, fkCol, std::optional<ma::Value>(newVal), row)) {
+                    return false;
+                }
+            }
+        }
+    }
+
+    {
+        QString fkA, fkB;
+        if (detectJunctionForThisTable(basePath_, fkA, fkB)) {
+            const int colA = fieldIndexByName(schema_, fkA);
+            const int colB = fieldIndexByName(schema_, fkB);
+            if (colA >= 0 && colB >= 0) {
+                std::optional<ma::Value> aVal = cache_[row].values[colA];
+                std::optional<ma::Value> bVal = cache_[row].values[colB];
+                if (col == colA) aVal = std::optional<ma::Value>(newVal);
+                if (col == colB) bVal = std::optional<ma::Value>(newVal);
+                if (aVal.has_value() && bVal.has_value()) {
+                    if (pairExistsInCache(cache_, colA, aVal, colB, bVal, row)) {
+                        return false;
+                    }
+                }
+            }
         }
     }
 
@@ -581,12 +676,11 @@ bool TableModel::setData(const QModelIndex& idx, const QVariant& v, int role) {
         }
     }
 
-    std::optional<ma::Value> oldPkVal;
-    if (editingPK) oldPkVal = cache_[row].values[pkCol];
-
     ma::Record rec = cache_[row];
     if (setNull) rec.values[col].reset();
     else         rec.values[col] = newVal;
+
+    std::optional<ma::Value> oldPkVal = (pkCol >= 0) ? cache_[row].values[pkCol] : std::optional<ma::Value>();
 
     auto maybeNewRid = table_->update(rids_[row], rec);
     if (!maybeNewRid) return false;
