@@ -613,14 +613,17 @@ bool TableModel::setData(const QModelIndex& idx, const QVariant& v, int role) {
     for (const auto& rel : relationsWhereBaseIsChild(basePath_)) {
         const int fkCol = fieldIndexByName(schema_, rel.childField);
         if (fkCol == col) {
-            if (setNull) return false;
-            if (rel.enforceRI) {
-                if (!valueExistsInParent(basePath_, rel, newVal)) return false;
-            }
-            const QString t = rel.relType.isEmpty() ? "1:N" : rel.relType;
-            if (t == "1:1") {
-                if (!columnValueWouldBeUnique(cache_, fkCol, std::optional<ma::Value>(newVal), row)) {
-                    return false;
+            if (setNull) {
+                if (rel.enforceRI) return false;
+            } else {
+                if (rel.enforceRI) {
+                    if (!valueExistsInParent(basePath_, rel, newVal)) return false;
+                }
+                const QString t = rel.relType.isEmpty() ? "1:N" : rel.relType;
+                if (t == "1:1") {
+                    if (!columnValueWouldBeUnique(cache_, fkCol, std::optional<ma::Value>(newVal), row)) {
+                        return false;
+                    }
                 }
             }
         }
@@ -731,64 +734,136 @@ bool TableModel::insertRows(int row, int count, const QModelIndex& parent) {
     Q_UNUSED(parent);
     if (!table_ || count <= 0) return false;
 
-    beginInsertRows(QModelIndex(), rowCount(), rowCount()+count-1);
+    const int insertPos = (row < 0 || row > (int)cache_.size()) ? (int)cache_.size() : row;
 
-    for (int i=0; i<count; ++i) {
-        ma::Record rec = makeDefaultRecord();
-        auto rid = table_->insert(rec);
-        rids_.push_back(rid);
-        cache_.push_back(rec);
+    beginInsertRows(QModelIndex(), insertPos, insertPos + count - 1);
+
+    bool okAll = true;
+    for (int i = 0; i < count; ++i) {
+        ma::Record rec;
+        rec.values.resize(schema_.fields.size());
+        for (size_t c = 0; c < schema_.fields.size(); ++c) {
+            const auto& ff = schema_.fields[c];
+            if (ff.type == ma::FieldType::Bool) {
+                rec.values[c] = false;
+            } else {
+                rec.values[c].reset();
+            }
+        }
+
+        for (const auto& rel : relationsWhereBaseIsChild(basePath_)) {
+            const int fkCol = fieldIndexByName(schema_, rel.childField);
+            if (fkCol < 0) continue;
+
+            const QString t = rel.relType.isEmpty() ? "1:N" : rel.relType;
+
+            if (rec.values[fkCol].has_value()) {
+                if (rel.enforceRI && !valueExistsInParent(basePath_, rel, *rec.values[fkCol])) { okAll = false; break; }
+                if (t == "1:1") {
+                    if (!columnValueWouldBeUnique(cache_, fkCol, rec.values[fkCol], -1)) { okAll = false; break; }
+                }
+            }
+        }
+        if (!okAll) break;
+
+        {
+            QString fkA, fkB;
+            if (detectJunctionForThisTable(basePath_, fkA, fkB)) {
+                const int colA = fieldIndexByName(schema_, fkA);
+                const int colB = fieldIndexByName(schema_, fkB);
+                if (colA >= 0 && colB >= 0) {
+                    const auto& aVal = rec.values[colA];
+                    const auto& bVal = rec.values[colB];
+                    if (aVal.has_value() && bVal.has_value()) {
+                        if (pairExistsInCache(cache_, colA, aVal, colB, bVal, -1)) { okAll = false; }
+                    }
+                }
+            }
+        }
+        if (!okAll) break;
+
+        ma::RID rid;
+        try {
+            rid = table_->insert(rec);
+        } catch (...) {
+            okAll = false;
+            break;
+        }
+
+        const int finalPos = insertPos + i;
+        rids_.insert(rids_.begin() + finalPos, rid);
+        cache_.insert(cache_.begin() + finalPos, rec);
     }
 
     endInsertRows();
+
+    if (!okAll) {
+        reload();
+        return false;
+    }
+
     saveOrder();
     return true;
 }
 
 bool TableModel::removeRows(int row, int count, const QModelIndex& parent) {
     Q_UNUSED(parent);
-    if (!table_ || row < 0 || count <= 0 || row+count > (int)rids_.size()) return false;
+    if (!table_ || count <= 0) return false;
+    if (row < 0 || row + count > (int)cache_.size()) return false;
 
-    const QString pkName = loadPrimaryKeyNameForBase(basePath_);
-    const int pkCol = pkName.isEmpty() ? -1 : fieldIndexByName(schema_, pkName);
+    for (int i = 0; i < count; ++i) {
+        const int r = row + i;
 
-    beginRemoveRows(QModelIndex(), row, row+count-1);
+        for (const auto& rel : relationsWhereBaseIsParent(basePath_)) {
+            const QString pkName = loadPrimaryKeyNameForBase(basePath_);
+            if (pkName.isEmpty()) continue;
+            if (rel.parentField.compare(pkName, Qt::CaseInsensitive) != 0) continue;
 
-    for (int i=0; i<count; ++i) {
-        const int r = row + (count-1-i);
-        const auto rid = rids_[r];
-        const auto rec = cache_[r];
+            const auto& pkValOpt = cache_[r].values[fieldIndexByName(schema_, pkName)];
+            if (!pkValOpt.has_value()) continue;
 
-        if (pkCol >= 0) {
-            const auto& pkVal = rec.values[pkCol];
-            for (const auto& rel : relationsWhereBaseIsParent(basePath_)) {
-                if (rel.parentField.compare(pkName, Qt::CaseInsensitive)==0) {
-                    bool hasChild = false;
-                    try {
-                        const QString pd    = projectDirFromBase(basePath_);
-                        const QString cbase = basePathForTableName(pd, rel.childName);
-                        ma::Table ct; ct.open(cbase.toStdString());
-                        const int cCol = fieldIndexByName(ct.getSchema(), rel.childField);
-                        for (const auto& crid : ct.scanAll()) {
-                            auto childRec = ct.read(crid);
-                            if (childRec && valuesEqual(childRec->values[cCol], pkVal)) { hasChild = true; break; }
-                        }
-                        ct.close();
-                    } catch (...) {}
+            bool hasChild = false;
+            try {
+                const QString pd    = projectDirFromBase(basePath_);
+                const QString cbase = basePathForTableName(pd, rel.childName);
+                ma::Table ct; ct.open(cbase.toStdString());
+                const int cCol = fieldIndexByName(ct.getSchema(), rel.childField);
 
-                    if (hasChild) {
-                        if (rel.cascadeDelete) {
-                            cascadeDeleteChildren(basePath_, rel, pkVal.value());
-                        } else {
-                            endRemoveRows();
-                            return false;
-                        }
+                for (const auto& crid : ct.scanAll()) {
+                    auto childRec = ct.read(crid);
+                    if (childRec && valuesEqual(childRec->values[cCol], pkValOpt)) {
+                        hasChild = true; break;
                     }
+                }
+                ct.close();
+            } catch (...) {}
+
+            if (hasChild && !rel.cascadeDelete) {
+                return false;
+            }
+        }
+    }
+
+    beginRemoveRows(QModelIndex(), row, row + count - 1);
+
+    for (int i = 0; i < count; ++i) {
+        const int r = row;
+
+        const QString pkName = loadPrimaryKeyNameForBase(basePath_);
+        std::optional<ma::Value> pkVal = (pkName.isEmpty()) ? std::optional<ma::Value>()
+                                                            : cache_[r].values[fieldIndexByName(schema_, pkName)];
+
+        if (pkVal.has_value()) {
+            for (const auto& rel : relationsWhereBaseIsParent(basePath_)) {
+                if (rel.parentField.compare(pkName, Qt::CaseInsensitive) != 0) continue;
+                if (rel.cascadeDelete) {
+                    cascadeDeleteChildren(basePath_, rel, pkVal.value());
                 }
             }
         }
 
-        table_->erase(rid);
+        table_->erase(rids_[r]);
+
         rids_.erase(rids_.begin() + r);
         cache_.erase(cache_.begin() + r);
     }

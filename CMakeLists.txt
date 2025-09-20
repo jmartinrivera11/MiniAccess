@@ -52,6 +52,7 @@ if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
         core/pk_utils.h core/pk_utils.cpp
         core/relations_io.h core/relations_io.cpp
         core/metadata.h core/metadata.cpp
+        gui/relationeditdialog.h gui/relationeditdialog.cpp
 
 
     )

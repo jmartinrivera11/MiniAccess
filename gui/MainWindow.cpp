@@ -41,7 +41,6 @@ void MainWindow::setupUi() {
     setWindowTitle("MiniAccess");
     resize(1200, 800);
 
-    // --- Centro: tabs ---
     tabs_ = new QTabWidget(this);
     tabs_->setTabsClosable(true);
     tabs_->setDocumentMode(true);
@@ -66,14 +65,11 @@ void MainWindow::setupUi() {
         if (w) w->deleteLater();
     });
 
-    // --- Dock izquierdo ---
     dock_ = new ObjectsDock(this);
     addDockWidget(Qt::LeftDockWidgetArea, dock_);
     connect(dock_, &ObjectsDock::openDatasheet, this, &MainWindow::openFromDockDatasheet);
     connect(dock_, &ObjectsDock::openDesign,    this, &MainWindow::openFromDockDesign);
 
-    // ===== MENÚ SUPERIOR =====
-    // File
     QMenu* fileMenu = menuBar()->addMenu("&File");
     QAction* actNewProject   = fileMenu->addAction(QIcon(":/icons/icons/new.svg"),  "New Project...");
     QAction* actOpenProject  = fileMenu->addAction(QIcon(":/icons/icons/open.svg"), "Open Project...");
@@ -82,19 +78,17 @@ void MainWindow::setupUi() {
     fileMenu->addSeparator();
     QAction* actQuit         = fileMenu->addAction("Quit");
 
-    actNewProject->setShortcut(QKeySequence::New);    // Ctrl+N
-    actOpenProject->setShortcut(QKeySequence::Open);  // Ctrl+O
-    actCloseProject->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_W)); // Ctrl+W
-    actQuit->setShortcut(QKeySequence::Quit);         // Ctrl+Q
+    actNewProject->setShortcut(QKeySequence::New);
+    actOpenProject->setShortcut(QKeySequence::Open);
+    actCloseProject->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_W));
+    actQuit->setShortcut(QKeySequence::Quit);
 
-    // View
     QMenu* viewMenu = menuBar()->addMenu("&View");
     QAction* actZoomIn  = viewMenu->addAction(QIcon(":/icons/icons/zoom-in.svg"),  "Zoom In");
     QAction* actZoomOut = viewMenu->addAction(QIcon(":/icons/icons/zoom-out.svg"), "Zoom Out");
-    actZoomIn->setShortcut(QKeySequence::ZoomIn);     // Ctrl + '+'
-    actZoomOut->setShortcut(QKeySequence::ZoomOut);   // Ctrl + '-'
+    actZoomIn->setShortcut(QKeySequence::ZoomIn);
+    actZoomOut->setShortcut(QKeySequence::ZoomOut);
 
-    // ===== RIBBON =====
     QToolBar* ribbon = addToolBar("Ribbon");
     ribbon->setObjectName("MainRibbon");
     ribbon->setIconSize(QSize(28,28));
@@ -128,11 +122,9 @@ void MainWindow::setupUi() {
         btn->setAutoRaise(false);
     }
 
-    // ===== Status bar =====
     statusLabel_ = new QLabel("Ready");
     statusBar()->addPermanentWidget(statusLabel_);
 
-    // ===== Conexiones =====
     connect(actNewProject,   &QAction::triggered, this, &MainWindow::newProject);
     connect(actOpenProject,  &QAction::triggered, this, &MainWindow::openProject);
     connect(actCloseProject, &QAction::triggered, this, &MainWindow::closeCurrentProject);
@@ -152,7 +144,6 @@ void MainWindow::setupUi() {
     connect(actDelete,       &QAction::triggered, this, &MainWindow::deleteRecord);
     connect(actRefresh,      &QAction::triggered, this, &MainWindow::refreshView);
 
-    // ===== Proyecto inicial =====
     setProjectPathAndReload(QString());
 }
 
@@ -233,7 +224,20 @@ void MainWindow::openRelationDesigner() {
         if (i >= 0) { tabs_->setCurrentIndex(i); return; }
         relationDesignerTab_.clear();
     }
+
     auto* page = new RelationDesignerPage(currentProjectPath_, this);
+
+    page->setIsTableOpen([this](const QString& tableName) -> bool {
+        const QString base = QDir(currentProjectPath_).filePath(tableName);
+
+        auto isOpenIn = [&](const QHash<QString, QPointer<QWidget>>& map) -> bool {
+            auto it = map.find(base);
+            if (it == map.end()) return false;
+            return it.value() != nullptr;
+        };
+        return isOpenIn(openDatasheets_) || isOpenIn(openDesigns_);
+    });
+
     int idx = tabs_->addTab(page, QIcon(":/icons/icons/relation.svg"), "Relations");
     tabs_->setCurrentIndex(idx);
     relationDesignerTab_ = page;

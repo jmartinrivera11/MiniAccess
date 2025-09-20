@@ -31,9 +31,11 @@
 #include <QSizePolicy>
 #include <QFont>
 #include <qevent.h>
-#include "../core/pk_utils.h"
+#include <QDir>
 #include "../core/relations_io.h"
 #include "../core/metadata.h"
+#include "relationeditdialog.h"
+#include "../core/table.h"
 
 static QFont safeUiFontRegular(int pt = 10) {
 #ifdef Q_OS_WIN
@@ -200,6 +202,10 @@ protected:
     }
 };
 
+static inline QString basePathForTableName(const QString& projectDir, const QString& tableName) {
+    return QDir(projectDir).filePath(tableName);
+}
+
 RelationDesignerPage::RelationDesignerPage(const QString& projectDir, QWidget* parent)
     : QWidget(parent)
     , scene_(new QGraphicsScene(this))
@@ -324,6 +330,8 @@ void RelationDesignerPage::buildUi() {
     connect(btnCreate_, &QPushButton::clicked, this, &RelationDesignerPage::onBtnCreateRelation);
     connect(btnDelete_, &QPushButton::clicked, this, &RelationDesignerPage::onBtnDeleteRelation);
     connect(btnSave_,   &QPushButton::clicked, this, &RelationDesignerPage::onBtnSave);
+    connect(relationsGrid_, &QTableWidget::cellDoubleClicked,
+            this, &RelationDesignerPage::onGridCellDoubleClicked);
 }
 
 QStringList RelationDesignerPage::allTablesInProject() const {
@@ -366,6 +374,17 @@ quint16 RelationDesignerPage::typeIdFor(const QString& table, const QString& fie
     }
     const auto& tm = schemas_[table];
     return meta::fieldTypeId(tm, field);
+}
+
+quint16 RelationDesignerPage::sizeFor(const QString& table, const QString& field) {
+    if (!schemas_.contains(table)) {
+        schemas_.insert(table, meta::readTableMeta(projectDir_, table));
+    }
+    const auto& tm = schemas_[table];
+    for (const auto& fi : tm.fields) {
+        if (fi.name == field) return fi.size;
+    }
+    return 0;
 }
 
 void RelationDesignerPage::addTableBoxAt(const QString& table, const QPointF& scenePos) {
@@ -418,19 +437,38 @@ RelationDesignerPage::FieldItem* RelationDesignerPage::pickSecondSelected() cons
 int RelationDesignerPage::findRelationIndex(const QString& lt, const QString& lf,
                                             const QString& rt, const QString& rf,
                                             const QString& type) const {
-    for (int i=0;i<relations_.size();++i) {
-        const auto& r = relations_[i];
-        if (r.leftTable==lt && r.leftField==lf && r.rightTable==rt && r.rightField==rf && r.relType==type)
-            return i;
+    for (int i = 0; i < relations_.size(); ++i) {
+        const auto& R = relations_[i];
+        const bool sameDir = (R.leftTable == lt && R.leftField == lf &&
+                              R.rightTable == rt && R.rightField == rf &&
+                              R.relType == type);
+        const bool reversed = (R.leftTable == rt && R.leftField == rf &&
+                               R.rightTable == lt && R.rightField == lf &&
+                               R.relType == type);
+        if (sameDir || reversed) return i;
     }
     return -1;
 }
 
 bool RelationDesignerPage::canFormRelation(const QString& type, const QString& lt, const QString& lf,
                                            const QString& rt, const QString& rf, QString& whyNot) const {
-    if (!boxes_.contains(lt) || !boxes_.contains(rt)) { whyNot = tr("Ambas tablas deben estar en el lienzo."); return false; }
-    if (lt == rt) { whyNot = tr("Las relaciones deben ser entre tablas distintas."); return false; }
-    if (lt == rt && lf == rf) { whyNot = tr("No puedes relacionar un campo consigo mismo."); return false; }
+    if (!boxes_.contains(lt) || !boxes_.contains(rt)) {
+        whyNot = tr("Ambas tablas deben estar en el lienzo.");
+        return false;
+    }
+    if (lt == rt) {
+        whyNot = tr("Las relaciones deben ser entre tablas distintas.");
+        return false;
+    }
+    if (lt == rt && lf == rf) {
+        whyNot = tr("No puedes relacionar un campo consigo mismo.");
+        return false;
+    }
+
+    if (findRelationIndex(lt, lf, rt, rf, type) >= 0) {
+        whyNot = tr("Esa relación ya existe.");
+        return false;
+    }
 
     auto* self = const_cast<RelationDesignerPage*>(this);
     if (!self->schemas_.contains(lt)) self->schemas_.insert(lt, meta::readTableMeta(projectDir_, lt));
@@ -444,13 +482,29 @@ bool RelationDesignerPage::canFormRelation(const QString& type, const QString& l
         return false;
     }
 
-    const QString pkRight = self->primaryKeyForTable(rt);
-    if (type == "1:N") {
-        if (rf != pkRight) { whyNot = tr("En 1:N el campo del lado derecho debe ser la PK del padre."); return false; }
-    } else if (type == "1:1") {
-        if (rf != pkRight) { whyNot = tr("En 1:1 el campo del lado derecho debe ser PK."); return false; }
-    } else if (type == "N:M") {
+    const quint16 sL = self->sizeFor(lt, lf);
+    const quint16 sR = self->sizeFor(rt, rf);
+    if (sL > 0 && sR > 0 && sL > sR) {
+        whyNot = tr("Longitud incompatible: %1.%2(size=%3) no puede referenciar %4.%5(size=%6).")
+        .arg(lt, lf).arg(sL).arg(rt, rf).arg(sR);
+        return false;
     }
+
+    const QString pkRight = self->primaryKeyForTable(rt);
+    if (type == "1:N" || type == "1:1") {
+        if (pkRight.isEmpty() || rf != pkRight) {
+            whyNot = tr("El campo del lado derecho debe ser la PK de la tabla padre (%1.%2).")
+            .arg(rt, pkRight.isEmpty()? QStringLiteral("<sin PK>") : pkRight);
+            return false;
+        }
+    }
+
+    if (type == "1:N" && lf != rf) {
+        whyNot = tr("1:N requiere mismo nombre de campo: FK '%1' debe llamarse igual que la PK '%2'.")
+        .arg(lf, rf);
+        return false;
+    }
+
     return true;
 }
 
@@ -536,17 +590,38 @@ void RelationDesignerPage::onBtnCreateRelation() {
         return;
     }
 
-    QString type = cbRelType_->currentText();
+    const bool openA = tableIsOpen(a->table());
+    const bool openB = tableIsOpen(b->table());
+    if (openA || openB) {
+        QString msg = tr("No se puede modificar relaciones mientras haya tablas abiertas.\nAbiertas: ");
+        if (openA) msg += a->table();
+        if (openA && openB) msg += ", ";
+        if (openB) msg += b->table();
+        QMessageBox::warning(this, tr("Relaciones"), msg);
+        return;
+    }
+
+    QString type = cbRelType_ ? cbRelType_->currentText() : QStringLiteral("1:N");
 
     FieldItem *left = a, *right = b;
     if ((a->isPk() && !b->isPk()) || (!a->isPk() && b->isPk())) {
-        if (a->isPk()) { left=b; right=a; } else { left=a; right=b; }
+        if (a->isPk()) { left = b; right = a; } else { left = a; right = b; }
     }
 
     QString why;
     if (!canFormRelation(type, left->table(), left->name(), right->table(), right->name(), why)) {
         QMessageBox::warning(this, tr("Relaciones"), why);
         return;
+    }
+
+    if (type != "N:M") {
+        QString whyData;
+        if (!validarDatosExistentes(left->table(), left->name(),
+                                    right->table(), right->name(),
+                                    type, whyData)) {
+            QMessageBox::warning(this, tr("Relaciones"), whyData);
+            return;
+        }
     }
 
     if (type == "N:M") {
@@ -556,47 +631,54 @@ void RelationDesignerPage::onBtnCreateRelation() {
             return;
         }
 
+        if (tableIsOpen(junction)) {
+            QMessageBox::warning(this, tr("Relaciones"),
+                                 tr("No se puede crear la relación mientras la tabla intermedia '%1' esté abierta.").arg(junction));
+            return;
+        }
+
         auto* boxA = boxes_.value(left->table(),  nullptr);
         auto* boxB = boxes_.value(right->table(), nullptr);
-        QPointF pos = (boxA && boxB) ? (boxA->pos() + (boxB->pos()-boxA->pos())*0.5 + QPointF(60,20))
-                                     : QPointF(100,100);
+        QPointF pos = (boxA && boxB)
+                          ? (boxA->pos() + (boxB->pos()-boxA->pos())*0.5 + QPointF(60,20))
+                          : QPointF(100,100);
         addTableBoxAt(junction, pos);
 
-        VisualRelation r1;
-        r1.leftTable  = junction;
-        r1.leftField  = fkA;
-        r1.rightTable = left->table();
-        r1.rightField = primaryKeyForTable(left->table());
-        r1.relType    = "1:N";
-        r1.enforceRI     = cbEnforce_->isChecked();
-        r1.cascadeUpdate = cbCascadeUpd_->isChecked();
-        r1.cascadeDelete = cbCascadeDel_->isChecked();
-
-        VisualRelation r2;
-        r2.leftTable  = junction;
-        r2.leftField  = fkB;
-        r2.rightTable = right->table();
-        r2.rightField = primaryKeyForTable(right->table());
-        r2.relType    = "1:N";
-        r2.enforceRI     = cbEnforce_->isChecked();
-        r2.cascadeUpdate = cbCascadeUpd_->isChecked();
-        r2.cascadeDelete = cbCascadeDel_->isChecked();
-
-        auto* boxJ = boxes_.value(junction, nullptr);
         auto findFieldItem = [](TableBox* box, const QString& name)->FieldItem*{
             if (!box) return nullptr;
             for (auto* f : box->fieldItems()) if (f->name()==name) return f;
             return nullptr;
         };
+        auto* boxJ = boxes_.value(junction, nullptr);
+
+        VisualRelation r1;
+        r1.leftTable  = junction;       r1.leftField  = fkA;
+        r1.rightTable = left->table();  r1.rightField = primaryKeyForTable(left->table());
+        r1.relType    = "1:N";
+        r1.enforceRI     = cbEnforce_ && cbEnforce_->isChecked();
+        r1.cascadeUpdate = cbCascadeUpd_ && cbCascadeUpd_->isChecked();
+        r1.cascadeDelete = cbCascadeDel_ && cbCascadeDel_->isChecked();
         r1.leftItem  = findFieldItem(boxJ,   r1.leftField);
         r1.rightItem = findFieldItem(boxA,   r1.rightField);
+
+        VisualRelation r2;
+        r2.leftTable  = junction;       r2.leftField  = fkB;
+        r2.rightTable = right->table(); r2.rightField = primaryKeyForTable(right->table());
+        r2.relType    = "1:N";
+        r2.enforceRI     = cbEnforce_ && cbEnforce_->isChecked();
+        r2.cascadeUpdate = cbCascadeUpd_ && cbCascadeUpd_->isChecked();
+        r2.cascadeDelete = cbCascadeDel_ && cbCascadeDel_->isChecked();
         r2.leftItem  = findFieldItem(boxJ,   r2.leftField);
         r2.rightItem = findFieldItem(boxB,   r2.rightField);
 
-        drawRelation(r1); relations_.push_back(r1); addRelationToGrid(r1);
-        drawRelation(r2); relations_.push_back(r2); addRelationToGrid(r2);
-
+        if (findRelationIndex(r1.leftTable, r1.leftField, r1.rightTable, r1.rightField, r1.relType) < 0) {
+            drawRelation(r1); relations_.push_back(r1); addRelationToGrid(r1);
+        }
+        if (findRelationIndex(r2.leftTable, r2.leftField, r2.rightTable, r2.rightField, r2.relType) < 0) {
+            drawRelation(r2); relations_.push_back(r2); addRelationToGrid(r2);
+        }
         clearFieldSelection();
+        emit relacionCreada();
         return;
     }
 
@@ -606,9 +688,9 @@ void RelationDesignerPage::onBtnCreateRelation() {
     vr.rightTable = right->table();
     vr.rightField = right->name();
     vr.relType    = type;
-    vr.enforceRI     = cbEnforce_->isChecked();
-    vr.cascadeUpdate = cbCascadeUpd_->isChecked();
-    vr.cascadeDelete = cbCascadeDel_->isChecked();
+    vr.enforceRI     = cbEnforce_ && cbEnforce_->isChecked();
+    vr.cascadeUpdate = cbCascadeUpd_ && cbCascadeUpd_->isChecked();
+    vr.cascadeDelete = cbCascadeDel_ && cbCascadeDel_->isChecked();
     vr.leftItem  = left;
     vr.rightItem = right;
 
@@ -622,14 +704,42 @@ void RelationDesignerPage::onBtnCreateRelation() {
     addRelationToGrid(vr);
 
     clearFieldSelection();
+    emit relacionCreada();
 }
 
 void RelationDesignerPage::onBtnDeleteRelation() {
+    if (!relationsGrid_) return;
     const int row = relationsGrid_->currentRow();
-    if (row < 0 || row >= relations_.size()) return;
+    if (row < 0 || row >= relations_.size()) {
+        QMessageBox::information(this, tr("Relaciones"), tr("Selecciona una relación para eliminar."));
+        return;
+    }
+
+    const auto& r = relations_[row];
+
+    const bool openL = tableIsOpen(r.leftTable);
+    const bool openR = tableIsOpen(r.rightTable);
+    if (openL || openR) {
+        QString msg = tr("No se puede eliminar relaciones mientras haya tablas abiertas.\nAbiertas: ");
+        if (openL) msg += r.leftTable;
+        if (openL && openR) msg += ", ";
+        if (openR) msg += r.rightTable;
+        QMessageBox::warning(this, tr("Relaciones"), msg);
+        return;
+    }
+
+    if (QMessageBox::question(this, tr("Eliminar relación"),
+                              tr("¿Eliminar la relación %1.%2 → %3.%4 (%5)?")
+                                  .arg(r.leftTable, r.leftField, r.rightTable, r.rightField, r.relType))
+        != QMessageBox::Yes) {
+        return;
+    }
+
     removeRelationVisualOnly(row);
+    relations_.removeAt(row);
     relationsGrid_->removeRow(row);
-    relations_.remove(row);
+
+    emit relacionEliminada();
 }
 
 void RelationDesignerPage::onBtnSave() {
@@ -771,6 +881,7 @@ bool RelationDesignerPage::loadFromJsonV2() {
         auto* boxL = boxes_.value(vr.leftTable, nullptr);
         auto* boxR = boxes_.value(vr.rightTable, nullptr);
         if (!boxL || !boxR) continue;
+
         for (auto* f : boxL->fieldItems()) if (f->name()==vr.leftField)  vr.leftItem = f;
         for (auto* f : boxR->fieldItems()) if (f->name()==vr.rightField) vr.rightItem = f;
         if (!vr.leftItem || !vr.rightItem) continue;
@@ -799,4 +910,236 @@ void RelationDesignerPage::loadTablesList() {
     tablesList_->setDefaultDropAction(Qt::IgnoreAction);
     tablesList_->setDragDropMode(QAbstractItemView::DragOnly);
     tablesList_->setSelectionMode(QAbstractItemView::SingleSelection);
+}
+
+bool RelationDesignerPage::validarDatosExistentes(const QString& tablaOrigen,  const QString& campoOrigen,
+                                                  const QString& tablaDestino, const QString& campoDestino,
+                                                  const QString& tipoRelacion, QString& whyNot) const
+{
+    const int colO = indiceColumna(tablaOrigen,  campoOrigen);
+    const int colD = indiceColumna(tablaDestino, campoDestino);
+    if (colO < 0 || colD < 0) {
+        whyNot = tr("No se pudo localizar la columna en el esquema.");
+        return false;
+    }
+
+    Rows filasO = rowProvider_ ? rowProvider_(tablaOrigen)  : readRowsFromStorage(tablaOrigen);
+    Rows filasD = rowProvider_ ? rowProvider_(tablaDestino) : readRowsFromStorage(tablaDestino);
+
+    auto trimUltimaVacia = [](Rows& vv) {
+        if (vv.isEmpty()) return;
+        const auto& ult = vv.last();
+        bool vacia = true;
+        for (const auto& x : ult) {
+            if (x.isValid() && !x.toString().trimmed().isEmpty()) { vacia = false; break; }
+        }
+        if (vacia) vv.removeLast();
+    };
+    trimUltimaVacia(filasO);
+    trimUltimaVacia(filasD);
+
+    QSet<QString> clavesOrigen;
+    clavesOrigen.reserve(filasO.size());
+    for (const auto& f : filasO) {
+        if (colO >= 0 && colO < f.size()) {
+            const QString v = f[colO].toString().trimmed();
+            if (!v.isEmpty()) clavesOrigen.insert(v);
+        }
+    }
+
+    QSet<QString> usadosDestino;
+    const bool esUnoAUno = (tipoRelacion == "1:1");
+
+    for (const auto& f : filasD) {
+        if (colD < 0 || colD >= f.size()) continue;
+        const QString v = f[colD].toString().trimmed();
+
+        if (v.isEmpty()) continue;
+
+        if (!clavesOrigen.contains(v)) {
+            whyNot = tr("No se puede crear la relación: existen valores en '%1.%2' que no están en '%3.%4'.")
+                         .arg(tablaDestino, campoDestino, tablaOrigen, campoOrigen);
+            return false;
+        }
+
+        if (esUnoAUno) {
+            if (usadosDestino.contains(v)) {
+                whyNot = tr("No se puede crear la relación 1:1: el valor '%1' se repite en '%2.%3'.")
+                             .arg(v, tablaDestino, campoDestino);
+                return false;
+            }
+            usadosDestino.insert(v);
+        }
+    }
+    return true;
+}
+
+bool RelationDesignerPage::validarValorFK(const QString& tablaDestino,
+                                          const QString& campoDestino,
+                                          const QString& valor,
+                                          QString* outError) const
+{
+    for (const auto& r : relations_) {
+        if (!r.rightTable.compare(tablaDestino, Qt::CaseInsensitive) &&
+            !r.rightField.compare(campoDestino, Qt::CaseInsensitive))
+        {
+            const int colO = indiceColumna(r.leftTable,  r.leftField);
+            if (colO < 0) continue;
+
+            Rows filasO = rowProvider_ ? rowProvider_(r.leftTable) : readRowsFromStorage(r.leftTable);
+
+            const QString v = valor.trimmed();
+            if (v.isEmpty()) return true;
+
+            QSet<QString> clavesO;
+            clavesO.reserve(filasO.size());
+            for (const auto& f : filasO) {
+                if (colO >= 0 && colO < f.size()) {
+                    const QString vv = f[colO].toString().trimmed();
+                    if (!vv.isEmpty()) clavesO.insert(vv);
+                }
+            }
+            if (!clavesO.contains(v)) {
+                if (outError) {
+                    *outError = tr("No se puede agregar o cambiar el registro porque no existe un "
+                                   "registro relacionado en la tabla '%1'.").arg(r.leftTable);
+                }
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+RelationDesignerPage::Rows RelationDesignerPage::readRowsFromStorage(const QString& table) const {
+    Rows rows;
+
+    auto it = schemas_.find(table);
+    if (it == schemas_.end()) {
+        const_cast<RelationDesignerPage*>(this)->schemas_.insert(table, meta::readTableMeta(projectDir_, table));
+        it = const_cast<RelationDesignerPage*>(this)->schemas_.find(table);
+    }
+    const auto& tm = it.value();
+
+    try {
+        const QString base = basePathForTableName(projectDir_, table);
+        ma::Table t; t.open(base.toStdString());
+
+        for (const auto& rid : t.scanAll()) {
+            auto recOpt = t.read(rid);
+            if (!recOpt) continue;
+            const auto& rec = *recOpt;
+
+            Row row;
+            row.reserve(static_cast<int>(tm.fields.size()));
+
+            for (int i = 0; i < tm.fields.size(); ++i) {
+                const auto& vopt = rec.values[i];
+                if (!vopt.has_value()) { row.push_back(QVariant()); continue; }
+
+                const auto& v  = vopt.value();
+                QVariant qv;
+
+                if (std::holds_alternative<int>(v)) {
+                    qv = std::get<int>(v);
+                } else if (std::holds_alternative<double>(v)) {
+                    qv = std::get<double>(v);
+                } else if (std::holds_alternative<bool>(v)) {
+                    qv = std::get<bool>(v);
+                } else if (std::holds_alternative<std::string>(v)) {
+                    qv = QString::fromStdString(std::get<std::string>(v));
+                } else if (std::holds_alternative<long long>(v)) {
+                    qv = QVariant::fromValue<long long>(std::get<long long>(v));
+                } else {
+                    qv = QVariant();
+                }
+
+                row.push_back(qv);
+            }
+            rows.push_back(std::move(row));
+        }
+        t.close();
+    } catch (...) {
+    }
+
+    return rows;
+}
+
+int RelationDesignerPage::indiceColumna(const QString& table, const QString& field) const {
+    auto it = schemas_.find(table);
+    if (it == schemas_.end()) return -1;
+    const auto& tm = it.value();
+    for (int i = 0; i < tm.fields.size(); ++i) {
+        if (tm.fields[i].name.compare(field, Qt::CaseInsensitive) == 0) return i;
+    }
+    return -1;
+}
+
+void RelationDesignerPage::refreshGridRow(int idx) {
+    if (!relationsGrid_ || idx < 0 || idx >= relations_.size()) return;
+    const auto& r = relations_[idx];
+
+    relationsGrid_->setItem(idx, 0, new QTableWidgetItem(r.leftTable));
+    relationsGrid_->setItem(idx, 1, new QTableWidgetItem(r.leftField));
+    relationsGrid_->setItem(idx, 2, new QTableWidgetItem(r.rightTable));
+    relationsGrid_->setItem(idx, 3, new QTableWidgetItem(r.rightField));
+    relationsGrid_->setItem(idx, 4, new QTableWidgetItem(r.relType));
+    relationsGrid_->setItem(idx, 5, new QTableWidgetItem(r.enforceRI ? "Sí" : "No"));
+    relationsGrid_->setItem(idx, 6, new QTableWidgetItem(r.cascadeUpdate ? "Sí" : "No"));
+    relationsGrid_->setItem(idx, 7, new QTableWidgetItem(r.cascadeDelete ? "Sí" : "No"));
+}
+
+void RelationDesignerPage::onGridCellDoubleClicked(int row, int /*col*/) {
+    if (row < 0 || row >= relations_.size()) return;
+    auto current = relations_[row];
+
+    const bool openL = tableIsOpen(current.leftTable);
+    const bool openR = tableIsOpen(current.rightTable);
+    if (openL || openR) {
+        QString msg = tr("No se puede editar relaciones mientras haya tablas abiertas.\nAbiertas: ");
+        if (openL) msg += current.leftTable;
+        if (openL && openR) msg += ", ";
+        if (openR) msg += current.rightTable;
+        QMessageBox::warning(this, tr("Relaciones"), msg);
+        return;
+    }
+
+    RelationEditDialog::Model m;
+    m.leftTable  = current.leftTable;   m.leftField  = current.leftField;
+    m.rightTable = current.rightTable;  m.rightField = current.rightField;
+    m.relType        = (current.relType == "1:1") ? "1:1" : "1:N";
+    m.enforceRI      = current.enforceRI;
+    m.cascadeUpdate  = current.cascadeUpdate;
+    m.cascadeDelete  = current.cascadeDelete;
+
+    RelationEditDialog dlg(m, this);
+    if (dlg.exec() != QDialog::Accepted) return;
+
+    auto edited = dlg.result();
+
+    QString why;
+    if (!canFormRelation(edited.relType, current.leftTable, current.leftField,
+                         current.rightTable, current.rightField, why)) {
+        QMessageBox::warning(this, tr("Relaciones"), why);
+        return;
+    }
+
+    QString whyData;
+    if (!validarDatosExistentes(current.leftTable, current.leftField,
+                                current.rightTable, current.rightField,
+                                edited.relType, whyData)) {
+        QMessageBox::warning(this, tr("Relaciones"), whyData);
+        return;
+    }
+
+    current.relType       = edited.relType;
+    current.enforceRI     = edited.enforceRI;
+    current.cascadeUpdate = edited.cascadeUpdate;
+    current.cascadeDelete = edited.cascadeDelete;
+
+    if (current.labelLeft)  current.labelLeft->setPlainText( current.relType == "1:1" ? "1" : "N" );
+    if (current.labelRight) current.labelRight->setPlainText("1");
+
+    relations_[row] = current;
+    refreshGridRow(row);
 }
