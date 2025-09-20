@@ -62,13 +62,13 @@ public:
         text_ = new QGraphicsTextItem(name_, this);
         text_->setDefaultTextColor(Qt::black);
         text_->setFont(safeUiFontRegular());
-        text_->setPos(8, 2);
+        text_->setPos(15, -2);
 
         if (pk_) {
-            pkLabel_ = new QGraphicsTextItem(QStringLiteral("PK"), this);
-            pkLabel_->setDefaultTextColor(Qt::black);
-            pkLabel_->setFont(safeUiFontBold());
-            pkLabel_->setPos(218-10, 2);
+            QIcon ic(":/icons/icons/pk_black.svg");
+            QPixmap pm = ic.pixmap(QSize(16,16));
+            auto* pkIconItem = new QGraphicsPixmapItem(pm, this);
+            pkIconItem->setPos(1, 2);
         }
     }
 
