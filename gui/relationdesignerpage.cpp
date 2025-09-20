@@ -1143,3 +1143,218 @@ void RelationDesignerPage::onGridCellDoubleClicked(int row, int /*col*/) {
     relations_[row] = current;
     refreshGridRow(row);
 }
+
+void RelationDesignerPage::removeTableBox(const QString& table) {
+    auto it = boxes_.find(table);
+    if (it == boxes_.end()) return;
+    if (auto* box = it.value()) {
+        scene_->removeItem(box);
+        delete box;
+    }
+    boxes_.erase(it);
+}
+
+RelationDesignerPage::FieldItem* RelationDesignerPage::findFieldItem(TableBox* box, const QString& name) const {
+    if (!box) return nullptr;
+    for (auto* f : box->fieldItems()) {
+        if (f->name().compare(name, Qt::CaseInsensitive) == 0) return f;
+    }
+    return nullptr;
+}
+
+void RelationDesignerPage::rebindPointersForTable(const QString& table) {
+    auto* box = boxes_.value(table, nullptr);
+    if (!box) return;
+    for (auto& vr : relations_) {
+        bool touched = false;
+        if (vr.leftTable.compare(table, Qt::CaseInsensitive) == 0) {
+            vr.leftItem = findFieldItem(box, vr.leftField);
+            touched = true;
+        }
+        if (vr.rightTable.compare(table, Qt::CaseInsensitive) == 0) {
+            auto* boxR = boxes_.value(vr.rightTable, nullptr);
+            if (boxR) vr.rightItem = findFieldItem(boxR, vr.rightField);
+            touched = true;
+        }
+        if (touched && vr.line) updateRelationGeometry(vr);
+    }
+}
+
+bool RelationDesignerPage::canDeleteTable(const QString& table, QString* why) const {
+    for (const auto& r : relations_) {
+        if (r.leftTable.compare(table, Qt::CaseInsensitive) == 0 ||
+            r.rightTable.compare(table, Qt::CaseInsensitive) == 0) {
+            if (why) *why = tr("No se puede eliminar la tabla '%1' porque participa en relaciones. "
+                          "Elimina primero las relaciones en la ventana de Relaciones.")
+                           .arg(table);
+            return false;
+        }
+    }
+    return true;
+}
+
+bool RelationDesignerPage::canDeleteField(const QString& table, const QString& field, QString* why) const {
+    for (const auto& r : relations_) {
+        const bool hit =
+            (r.leftTable.compare(table, Qt::CaseInsensitive) == 0  && r.leftField.compare(field, Qt::CaseInsensitive) == 0) ||
+            (r.rightTable.compare(table, Qt::CaseInsensitive) == 0 && r.rightField.compare(field, Qt::CaseInsensitive) == 0);
+        if (hit) {
+            if (why) *why = tr("No se puede eliminar el campo '%1.%2' porque participa en relaciones. "
+                          "Elimina primero las relaciones en la ventana de Relaciones.")
+                           .arg(table, field);
+            return false;
+        }
+    }
+    return true;
+}
+
+bool RelationDesignerPage::applyRenameTable(const QString& oldName, const QString& newName, QString* why) {
+    if (oldName.compare(newName, Qt::CaseInsensitive) == 0) return true;
+
+    if (tableIsOpen(oldName) || tableIsOpen(newName)) {
+        if (why) *why = tr("No se puede renombrar mientras haya pestañas abiertas de '%1' o '%2'.").arg(oldName, newName);
+        return false;
+    }
+
+    if (boxes_.contains(newName)) {
+        if (why) *why = tr("Ya existe una tabla visual con nombre '%1'.").arg(newName);
+        return false;
+    }
+
+    QPointF pos(100,100);
+    if (auto* oldBox = boxes_.value(oldName, nullptr)) pos = oldBox->pos();
+    removeTableBox(oldName);
+
+    if (schemas_.contains(oldName)) {
+        auto tm = schemas_.take(oldName);
+        schemas_.insert(newName, tm);
+    } else {
+        schemas_.insert(newName, meta::readTableMeta(projectDir_, newName));
+    }
+
+    addTableBoxAt(newName, pos);
+
+    for (int i = 0; i < relations_.size(); ++i) {
+        auto& r = relations_[i];
+        bool touched = false;
+        if (r.leftTable.compare(oldName, Qt::CaseInsensitive) == 0) { r.leftTable = newName; touched = true; }
+        if (r.rightTable.compare(oldName, Qt::CaseInsensitive) == 0) { r.rightTable = newName; touched = true; }
+        if (touched) {
+            rebindPointersForTable(newName);
+            refreshGridRow(i);
+        }
+    }
+
+    saveToJsonV2();
+    emit relationsChanged();
+    return true;
+}
+
+bool RelationDesignerPage::applyRenameField(const QString& table, const QString& oldField, const QString& newField, QString* why) {
+    if (oldField.compare(newField, Qt::CaseInsensitive) == 0) return true;
+
+    if (tableIsOpen(table)) {
+        if (why) *why = tr("No se puede renombrar el campo mientras la tabla '%1' esté abierta.").arg(table);
+        return false;
+    }
+
+    schemas_.insert(table, meta::readTableMeta(projectDir_, table));
+
+    QPointF pos(100,100);
+    if (auto* box = boxes_.value(table, nullptr)) pos = box->pos();
+    removeTableBox(table);
+    addTableBoxAt(table, pos);
+
+    for (int i = 0; i < relations_.size(); ++i) {
+        auto& r = relations_[i];
+        bool touched = false;
+        if (r.leftTable.compare(table, Qt::CaseInsensitive) == 0 &&
+            r.leftField.compare(oldField, Qt::CaseInsensitive) == 0) {
+            r.leftField = newField; touched = true;
+        }
+        if (r.rightTable.compare(table, Qt::CaseInsensitive) == 0 &&
+            r.rightField.compare(oldField, Qt::CaseInsensitive) == 0) {
+            r.rightField = newField; touched = true;
+        }
+        if (touched) {
+            rebindPointersForTable(table);
+            refreshGridRow(i);
+        }
+    }
+
+    saveToJsonV2();
+    emit relationsChanged();
+    return true;
+}
+
+void RelationDesignerPage::revalidateAllRelations() {
+    QVector<int> toRemove;
+    for (int i = 0; i < relations_.size(); ++i) {
+        const auto& r = relations_[i];
+
+        if (!schemas_.contains(r.leftTable))  schemas_.insert(r.leftTable,  meta::readTableMeta(projectDir_, r.leftTable));
+        if (!schemas_.contains(r.rightTable)) schemas_.insert(r.rightTable, meta::readTableMeta(projectDir_, r.rightTable));
+
+        const auto& lm = schemas_.value(r.leftTable);
+        const auto& rm = schemas_.value(r.rightTable);
+
+        const bool leftFieldOk  = std::any_of(lm.fields.begin(), lm.fields.end(),
+                                             [&](const meta::FieldInfo& f){ return f.name.compare(r.leftField,  Qt::CaseInsensitive) == 0; });
+        const bool rightFieldOk = std::any_of(rm.fields.begin(), rm.fields.end(),
+                                              [&](const meta::FieldInfo& f){ return f.name.compare(r.rightField, Qt::CaseInsensitive) == 0; });
+
+        if (!leftFieldOk || !rightFieldOk) {
+            toRemove.push_back(i);
+            continue;
+        }
+
+        QString why;
+        if (!canFormRelation(r.relType, r.leftTable, r.leftField, r.rightTable, r.rightField, why)) {
+            toRemove.push_back(i);
+            continue;
+        }
+    }
+
+    std::sort(toRemove.begin(), toRemove.end(), std::greater<int>());
+    for (int row : toRemove) {
+        removeRelationVisualOnly(row);
+        relations_.removeAt(row);
+        if (relationsGrid_) relationsGrid_->removeRow(row);
+    }
+
+    for (auto it = boxes_.cbegin(); it != boxes_.cend(); ++it) {
+        rebindPointersForTable(it.key());
+    }
+
+    if (!toRemove.isEmpty()) {
+        saveToJsonV2();
+        emit relationsChanged();
+    }
+}
+
+void RelationDesignerPage::refreshTableBox(const QString& table) {
+    schemas_.insert(table, meta::readTableMeta(projectDir_, table));
+
+    QPointF pos(100,100);
+    if (auto* old = boxes_.value(table, nullptr)) pos = old->pos();
+
+    removeTableBox(table);
+    addTableBoxAt(table, pos);
+
+    rebindPointersForTable(table);
+
+    for (int i = 0; i < relations_.size(); ++i) {
+        const auto& r = relations_[i];
+        if (r.leftTable.compare(table, Qt::CaseInsensitive) == 0 ||
+            r.rightTable.compare(table, Qt::CaseInsensitive) == 0) {
+            refreshGridRow(i);
+        }
+    }
+
+    for (auto& r : relations_) {
+        if (r.leftTable.compare(table, Qt::CaseInsensitive) == 0 ||
+            r.rightTable.compare(table, Qt::CaseInsensitive) == 0) {
+            if (r.line) updateRelationGeometry(r);
+        }
+    }
+}

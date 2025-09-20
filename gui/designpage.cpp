@@ -16,7 +16,6 @@
 #include "../core/pk_utils.h"
 #include <QDir>
 #include <QFile>
-#include <QFileInfo>
 #include <algorithm>
 #include <cctype>
 #include <QJsonDocument>
@@ -25,6 +24,10 @@
 #include <QCheckBox>
 #include <QEvent>
 #include <QMouseEvent>
+#include "RelationDesignerPage.h"
+#include <QApplication>
+#include <QTableWidgetItem>
+#include <QSet>
 
 using namespace ma;
 
@@ -315,6 +318,10 @@ DesignPage::DesignPage(const QString& basePath, QWidget* parent)
     : QWidget(parent), basePath_(basePath) {
     setupUi();
     loadSchema();
+
+    connect(grid_, &QTableWidget::itemChanged,
+            this,   &DesignPage::onGridItemChanged,
+            Qt::UniqueConnection);
 }
 
 void DesignPage::setupUi() {
@@ -361,6 +368,8 @@ void DesignPage::loadSchema() {
         setSchema(t.getSchema());
         banner_->setText("Editing design for: " + QFileInfo(basePath_).fileName());
         banner_->show();
+        updateLastNamesBuffer();
+
     } catch (const std::exception& ex) {
         banner_->setText(QString("Error loading schema: %1").arg(ex.what()));
         banner_->show();
@@ -499,11 +508,53 @@ void DesignPage::addField() {
     connect(combo, &QComboBox::currentTextChanged,
             this,  &DesignPage::onComboTypeChanged,
             Qt::UniqueConnection);
+
+    updateLastNamesBuffer();
 }
 
 void DesignPage::removeField() {
-    auto sel = grid_->selectionModel()->selectedRows();
-    for (const auto& idx : sel) grid_->removeRow(idx.row());
+    if (!grid_) return;
+
+    RelationDesignerPage* relPage = nullptr;
+    for (QWidget* w : QApplication::allWidgets()) {
+        if ((relPage = qobject_cast<RelationDesignerPage*>(w))) break;
+    }
+
+    const QString tableName = QFileInfo(basePath_).fileName();
+
+    const auto sel = grid_->selectionModel()->selectedRows();
+    if (sel.isEmpty()) return;
+
+    QStringList blocked;
+    if (relPage) {
+        for (const auto& idx : sel) {
+            const int r = idx.row();
+            auto* itName = grid_->item(r, 0);
+            const QString field = itName ? itName->text().trimmed() : QString();
+            if (field.isEmpty()) continue;
+
+            QString why;
+            if (!relPage->canDeleteField(tableName, field, &why)) {
+                blocked << QString("%1.%2").arg(tableName, field);
+            }
+        }
+    }
+
+    if (!blocked.isEmpty()) {
+        QMessageBox::warning(this, tr("Remove Field"),
+                             tr("You cannot remove these fields because they are part of relationships:\n\n%1\n\n"
+                                "Delete those relationships first in the Relationships window.")
+                                 .arg(blocked.join('\n')));
+        return;
+    }
+
+    QList<int> rows;
+    rows.reserve(sel.size());
+    for (const auto& idx : sel) rows << idx.row();
+    std::sort(rows.begin(), rows.end(), std::greater<int>());
+    for (int r : rows) grid_->removeRow(r);
+
+    updateLastNamesBuffer();
 }
 
 void DesignPage::onTypeChanged(int row) {
@@ -528,7 +579,7 @@ bool DesignPage::isTableEmpty() const {
 }
 
 void DesignPage::saveDesign() {
-    bool ok=false;
+    bool ok = false;
     Schema newS = collectSchema(&ok);
     if (!ok) {
         banner_->setText("Please complete all field names and avoid duplicates.");
@@ -539,6 +590,7 @@ void DesignPage::saveDesign() {
     const QString base = basePath_;
     const QString meta = base + ".meta";
     const QString mad  = base + ".mad";
+    const QString tableName = QFileInfo(base).fileName();
 
     const bool exists = QFileInfo::exists(meta) || QFileInfo::exists(mad);
     if (!exists) {
@@ -546,6 +598,17 @@ void DesignPage::saveDesign() {
             ma::Table t; t.create(base.toStdString(), newS);
             banner_->setText("Design saved");
             banner_->show();
+
+            RelationDesignerPage* relPage = nullptr;
+            for (QWidget* w : QApplication::allWidgets()) {
+                if ((relPage = qobject_cast<RelationDesignerPage*>(w))) break;
+            }
+            if (relPage) {
+                relPage->revalidateAllRelations();
+                relPage->refreshTableBox(tableName);
+            }
+
+            updateLastNamesBuffer();
         } catch (const std::exception& ex) {
             banner_->setText(QString("Error creating table: %1").arg(ex.what()));
             banner_->show();
@@ -570,6 +633,17 @@ void DesignPage::saveDesign() {
             ma::Table t; t.create(base.toStdString(), newS);
             banner_->setText("Design saved");
             banner_->show();
+
+            RelationDesignerPage* relPage = nullptr;
+            for (QWidget* w : QApplication::allWidgets()) {
+                if ((relPage = qobject_cast<RelationDesignerPage*>(w))) break;
+            }
+            if (relPage) {
+                relPage->revalidateAllRelations();
+                relPage->refreshTableBox(tableName);
+            }
+
+            updateLastNamesBuffer();
             return;
         } catch (const std::exception& ex) {
             banner_->setText(QString("Error saving design: %1").arg(ex.what()));
@@ -597,11 +671,11 @@ void DesignPage::saveDesign() {
             if (!recOld) continue;
 
             ma::Record recNew = ma::Record::withFieldCount(static_cast<int>(newS.fields.size()));
-            for (size_t i=0; i<newS.fields.size(); ++i) {
+            for (size_t i = 0; i < newS.fields.size(); ++i) {
                 int j = fmap[i];
                 const ma::Field& nF = newS.fields[i];
-                const ma::Field* oF = (j>=0 ? &oldS.fields[j] : nullptr);
-                const std::optional<ma::Value> oldVal = (j>=0 ? (*recOld).values[j] : std::optional<ma::Value>{});
+                const ma::Field* oF = (j >= 0 ? &oldS.fields[j] : nullptr);
+                const std::optional<ma::Value> oldVal = (j >= 0 ? (*recOld).values[j] : std::optional<ma::Value>{});
 
                 recNew.values[i] = convertValueForNewField(nF, oldVal, oF);
             }
@@ -639,6 +713,17 @@ void DesignPage::saveDesign() {
         banner_->setText("Design saved");
         banner_->show();
 
+        RelationDesignerPage* relPage = nullptr;
+        for (QWidget* w : QApplication::allWidgets()) {
+            if ((relPage = qobject_cast<RelationDesignerPage*>(w))) break;
+        }
+        if (relPage) {
+            relPage->revalidateAllRelations();
+            relPage->refreshTableBox(tableName);
+        }
+
+        updateLastNamesBuffer();
+
     } catch (const std::exception& ex) {
         QFile::remove(tmpMeta);
         QFile::remove(tmpMad);
@@ -658,4 +743,48 @@ void DesignPage::onComboTypeChanged(const QString&) {
         }
     }
     if (row >= 0) onTypeChanged(row);
+}
+
+void DesignPage::updateLastNamesBuffer() {
+    lastNames_.clear();
+    lastNames_.reserve(grid_->rowCount());
+    for (int r = 0; r < grid_->rowCount(); ++r) {
+        auto* itName = grid_->item(r, 0);
+        lastNames_ << (itName ? itName->text().trimmed() : QString());
+    }
+}
+
+void DesignPage::onGridItemChanged(QTableWidgetItem* it) {
+    if (!it || it->column() != 0) return;
+    const int r = it->row();
+    if (r < 0 || r >= grid_->rowCount()) return;
+
+    const QString newName = it->text().trimmed();
+    if (r >= lastNames_.size()) lastNames_.resize(r+1);
+
+    const QString oldName = lastNames_.value(r);
+    if (oldName.isEmpty() || oldName == newName) {
+        lastNames_[r] = newName;
+        return;
+    }
+
+    RelationDesignerPage* relPage = nullptr;
+    for (QWidget* w : QApplication::allWidgets()) {
+        if ((relPage = qobject_cast<RelationDesignerPage*>(w))) break;
+    }
+    if (!relPage) { lastNames_[r] = newName; return; }
+
+    const QString tableName = QFileInfo(basePath_).fileName();
+
+    QString why;
+    if (!relPage->applyRenameField(tableName, oldName, newName, &why)) {
+        QSignalBlocker b(grid_);
+        it->setText(oldName);
+        banner_->setText(why.isEmpty() ? "Rename rejected by Relationships" : why);
+        banner_->show();
+        return;
+    }
+
+    lastNames_[r] = newName;
+    relPage->revalidateAllRelations();
 }

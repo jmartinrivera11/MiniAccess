@@ -28,6 +28,9 @@
 #include <QFile>
 #include <QCoreApplication>
 #include <QThread>
+#include "../core/relations_io.h"
+#include <QJsonArray>
+#include <QJsonObject>
 
 using namespace ma;
 
@@ -536,16 +539,38 @@ void MainWindow::deleteTableByBase(const QString& base) {
         QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
     if (ret != QMessageBox::Yes) return;
 
+    {
+        const QString relPath = QDir(currentProjectPath_).filePath("relations.json");
+        const QJsonArray rels  = loadRelationsArrayFlexible(relPath);
+        bool referenced = false;
+        for (const auto& v : rels) {
+            const auto o  = v.toObject();
+            const auto lt = o.value("leftTable").toString();
+            const auto rt = o.value("rightTable").toString();
+            if (lt.compare(tableName, Qt::CaseInsensitive) == 0 ||
+                rt.compare(tableName, Qt::CaseInsensitive) == 0) {
+                referenced = true; break;
+            }
+        }
+        if (referenced) {
+            QMessageBox::warning(
+                this, "Delete Table",
+                tr("You cannot delete table \"%1\" because it is part of one or more relationships.\n"
+                   "Delete those relationships first in the Relationships window.")
+                    .arg(tableName));
+            return;
+        }
+    }
+
     closeTabsForBase(base);
 
     if (!removeTableFiles(base)) {
         QMessageBox::critical(this, "Delete Table",
                               "Some files could not be removed. Check permissions.");
-        refreshDock();
         return;
     }
 
-    if (statusLabel_) statusLabel_->setText(QString("Table \"%1\" deleted").arg(tableName));
+    statusBar()->showMessage(QString("Table \"%1\" deleted").arg(tableName), 3000);
     refreshDock();
 }
 

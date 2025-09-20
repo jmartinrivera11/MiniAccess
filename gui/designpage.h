@@ -1,8 +1,10 @@
 #pragma once
 #include <QWidget>
+#include <QStringList>
 #include "../core/Schema.h"
 
 class QTableWidget;
+class QTableWidgetItem;
 class QStackedWidget;
 class QLabel;
 
@@ -17,6 +19,7 @@ private slots:
     void onTypeChanged(int row);
     void saveDesign();
     void onComboTypeChanged(const QString&);
+    void onGridItemChanged(QTableWidgetItem* it);
 
 private:
     void setupUi();
@@ -24,10 +27,12 @@ private:
     void setSchema(const ma::Schema& s);
     ma::Schema collectSchema(bool* ok) const;
     bool isTableEmpty() const;
+    void updateLastNamesBuffer();
 
 private:
     QString        basePath_;
     QTableWidget*  grid_{nullptr};
     QStackedWidget* props_{nullptr};
     QLabel*        banner_{nullptr};
+    QStringList     lastNames_;
 };

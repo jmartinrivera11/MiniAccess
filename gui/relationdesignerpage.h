@@ -33,9 +33,19 @@ public:
     using IsTableOpenFn = std::function<bool (const QString& tabla)>;
     void setIsTableOpen(IsTableOpenFn fn) { isTableOpen_ = std::move(fn); }
 
+    bool canDeleteTable(const QString& table, QString* why = nullptr) const;
+    bool canDeleteField(const QString& table, const QString& field, QString* why = nullptr) const;
+
+    bool applyRenameTable(const QString& oldName, const QString& newName, QString* why = nullptr);
+    bool applyRenameField(const QString& table, const QString& oldField, const QString& newField, QString* why = nullptr);
+
+    void revalidateAllRelations();
+    void refreshTableBox(const QString& table);
+
 signals:
     void relacionCreada();
     void relacionEliminada();
+    void relationsChanged();
 
 private slots:
     void onBtnCreateRelation();
@@ -57,10 +67,12 @@ private:
     Rows readRowsFromStorage(const QString& table) const;
 
     void addTableBoxAt(const QString& table, const QPointF& scenePos);
-
+    void removeTableBox(const QString& table);
     class CanvasView;
     class TableBox;
     class FieldItem;
+    FieldItem* findFieldItem(TableBox* box, const QString& name) const;
+
     void onFieldClicked(FieldItem* fi);
     void clearFieldSelection();
     FieldItem* pickFirstSelected() const;
@@ -114,6 +126,7 @@ private:
     bool migrateJsonIfNeeded() const;
 
     bool tableIsOpen(const QString& table) const { return isTableOpen_ ? isTableOpen_(table) : false; }
+    void rebindPointersForTable(const QString& table);
 
 private:
     QGraphicsScene* scene_{nullptr};
