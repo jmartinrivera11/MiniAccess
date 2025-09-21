@@ -23,7 +23,6 @@ private slots:
     void onRemoveCondition();
     void onRun();
     void onClear();
-    void onFieldsToggleAll();
 
 private:
     void setupUi();
@@ -33,16 +32,17 @@ private:
 
     int  currentFieldIndexByName(const QString& name) const;
     void setRowEditorTypes(int row);
+    void updateRemoveEnabled();
 
 private:
     QString projectDir_;
 
     QComboBox*    cbTable_ {nullptr};
     QListWidget*  lwFields_ {nullptr};
-    QPushButton*  btnToggleFields_ {nullptr};
     QTableWidget* twConds_ {nullptr};
     QTableView*   tvResult_ {nullptr};
     QLabel*       labInfo_ {nullptr};
+    QPushButton*  btnRemove_ {nullptr};
     QueryModel*   model_ {nullptr};
     QString       currentBasePath_;
     struct Col { QString name; int index; int type; uint16_t size; };

@@ -3,6 +3,7 @@
 #include <QDateTime>
 #include <algorithm>
 #include <variant>
+#include <limits>
 
 using namespace ma;
 
@@ -37,21 +38,129 @@ bool QueryModel::run(const Spec& s, QString* err) {
 
         conds_ = s.conds;
 
-        rids_ = table_->scanAll();
         rows_.clear();
-        rows_.reserve(rids_.size());
-        for (const auto& rid : rids_) {
-            auto recOpt = table_->read(rid);
-            if (!recOpt) continue;
-            const auto& rec = *recOpt;
-            if (matchRecord(rec)) {
-                Record out = Record::withFieldCount((int)proj_.size());
-                for (int i=0;i<(int)proj_.size();++i) {
-                    out.values[i] = rec.values[proj_[i]];
-                }
-                rows_.push_back(std::move(out));
+        rids_.clear();
+
+        auto isIndexableOp = [](Op op)->bool {
+            switch (op) { case Op::EQ: case Op::LT: case Op::LE: case Op::GT: case Op::GE: return true; default: return false; }
+        };
+        int idxCond = -1;
+        for (int i=0;i<(int)conds_.size();++i) {
+            if (conds_[i].fieldIndex>=0 && conds_[i].fieldIndex<(int)schema_.fields.size() && isIndexableOp(conds_[i].op)) {
+                const auto& f = schema_.fields[conds_[i].fieldIndex];
+                if (f.type == FieldType::Int32 || f.type == FieldType::String || f.type == FieldType::CharN) { idxCond = i; break; }
             }
         }
+
+        if (idxCond == -1) {
+            const auto all = table_->scanAll();
+            rows_.reserve(all.size());
+            for (const auto& rid : all) {
+                auto rec = table_->read(rid);
+                if (!rec) continue;
+                if (matchRecord(*rec)) {
+                    ma::Record row = ma::Record::withFieldCount((int)proj_.size());
+                    for (int c=0;c<(int)proj_.size();++c) row.values[c] = (*rec).values[proj_[c]];
+                    rows_.push_back(std::move(row));
+                }
+            }
+            endResetModel();
+            return true;
+        }
+
+        const Cond& c0 = conds_[idxCond];
+        const int   fi = c0.fieldIndex;
+        const auto& fld= schema_.fields[fi];
+
+        int idxSecond = -1;
+        for (int i=0;i<(int)conds_.size();++i) {
+            if (i==idxCond) continue;
+            if (conds_[i].fieldIndex==fi && isIndexableOp(conds_[i].op)) { idxSecond = i; break; }
+        }
+
+        std::vector<RID> candidates;
+
+        if (fld.type == FieldType::Int32) {
+            table_->createInt32Index(fi, "idx_" + schema_.fields[fi].name);
+
+            auto toI32 = [](const QVariant& v)->int32_t { bool ok=false; int val = v.toInt(&ok); return ok?(int32_t)val:(int32_t)0; };
+
+            if (idxSecond == -1) {
+                switch (c0.op) {
+                case Op::EQ: candidates = table_->findByInt32(fi, toI32(c0.value)); break;
+                case Op::LT: candidates = table_->rangeByInt32(fi, std::numeric_limits<int32_t>::min(), toI32(c0.value)-1); break;
+                case Op::LE: candidates = table_->rangeByInt32(fi, std::numeric_limits<int32_t>::min(), toI32(c0.value));   break;
+                case Op::GT: candidates = table_->rangeByInt32(fi, toI32(c0.value)+1, std::numeric_limits<int32_t>::max()); break;
+                case Op::GE: candidates = table_->rangeByInt32(fi, toI32(c0.value),   std::numeric_limits<int32_t>::max()); break;
+                default: break;
+                }
+            } else {
+                const Cond& c1 = conds_[idxSecond];
+                int32_t lo = std::numeric_limits<int32_t>::min();
+                int32_t hi = std::numeric_limits<int32_t>::max();
+                auto apply = [&](const Cond& c){
+                    switch (c.op) {
+                    case Op::LT: hi = std::min<int32_t>(hi, toI32(c.value)-1); break;
+                    case Op::LE: hi = std::min<int32_t>(hi, toI32(c.value));   break;
+                    case Op::GT: lo = std::max<int32_t>(lo, toI32(c.value)+1); break;
+                    case Op::GE: lo = std::max<int32_t>(lo, toI32(c.value));   break;
+                    case Op::EQ: lo = hi = toI32(c.value); break;
+                    default: break;
+                    }
+                };
+                apply(c0); apply(c1);
+                candidates = table_->rangeByInt32(fi, lo, hi);
+            }
+        } else if (fld.type == FieldType::String || fld.type == FieldType::CharN) {
+            table_->createStringIndex(fi, "idx_" + schema_.fields[fi].name);
+            auto toStd = [](const QVariant& v)->std::string { return v.toString().toStdString(); };
+
+            if (idxSecond == -1) {
+                switch (c0.op) {
+                case Op::EQ: candidates = table_->findByString(fi, toStd(c0.value)); break;
+                case Op::LT: candidates = table_->rangeByString(fi, std::string(), toStd(c0.value)); break;
+                case Op::LE: candidates = table_->rangeByString(fi, std::string(), toStd(c0.value)); break;
+                case Op::GT: candidates = table_->rangeByString(fi, toStd(c0.value), std::string(1, char(0x7f))); break;
+                case Op::GE: candidates = table_->rangeByString(fi, toStd(c0.value), std::string(1, char(0x7f))); break;
+                default: break;
+                }
+            } else {
+                const Cond& c1 = conds_[idxSecond];
+                std::string lo = "";
+                std::string hi = std::string(1, char(0x7f));
+                auto apply = [&](const Cond& c){
+                    switch (c.op) {
+                    case Op::LT: hi = std::min(hi, toStd(c.value)); break;
+                    case Op::LE: hi = std::min(hi, toStd(c.value)); break;
+                    case Op::GT: lo = std::max(lo, toStd(c.value)); break;
+                    case Op::GE: lo = std::max(lo, toStd(c.value)); break;
+                    case Op::EQ: lo = hi = toStd(c.value); break;
+                    default: break;
+                    }
+                };
+                apply(c0); apply(c1);
+                candidates = table_->rangeByString(fi, lo, hi);
+            }
+        }
+
+        std::sort(candidates.begin(), candidates.end(), [](const RID& a, const RID& b){
+            return (a.pageId<b.pageId) || (a.pageId==b.pageId && a.slotId<b.slotId);
+        });
+        candidates.erase(std::unique(candidates.begin(), candidates.end(), [](const RID& a, const RID& b){
+                             return a.pageId==b.pageId && a.slotId==b.slotId;
+                         }), candidates.end());
+
+        rows_.reserve(candidates.size());
+        for (const auto& rid : candidates) {
+            auto rec = table_->read(rid);
+            if (!rec) continue;
+            if (matchRecord(*rec)) {
+                ma::Record row = ma::Record::withFieldCount((int)proj_.size());
+                for (int c=0;c<(int)proj_.size();++c) row.values[c] = (*rec).values[proj_[c]];
+                rows_.push_back(std::move(row));
+            }
+        }
+
         endResetModel();
         return true;
     } catch (const std::exception& ex) {

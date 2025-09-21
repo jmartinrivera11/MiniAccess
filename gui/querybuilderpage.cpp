@@ -1,4 +1,4 @@
-#include "QueryBuilderPage.h"
+#include "querybuilderpage.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QSplitter>
@@ -14,9 +14,9 @@
 #include <QTableView>
 #include <QMessageBox>
 #include <QLineEdit>
-#include <QComboBox>
 #include <QSpinBox>
-
+#include <QSet>
+#include <QItemSelectionModel>
 #include "../core/Table.h"
 #include "../core/Schema.h"
 #include "../core/DisplayFmt.h"
@@ -65,10 +65,7 @@ void QueryBuilderPage::setupUi() {
     lLay->setSpacing(6);
     auto* headL = new QHBoxLayout();
     headL->addWidget(new QLabel("Fields", left));
-    btnToggleFields_ = new QPushButton("Toggle All", left);
-    connect(btnToggleFields_, &QPushButton::clicked, this, &QueryBuilderPage::onFieldsToggleAll);
     headL->addStretch();
-    headL->addWidget(btnToggleFields_);
     lLay->addLayout(headL);
 
     lwFields_ = new QListWidget(left);
@@ -83,10 +80,10 @@ void QueryBuilderPage::setupUi() {
     auto* rowCondHead = new QHBoxLayout();
     rowCondHead->addWidget(new QLabel("Criteria", right));
     auto* btnAdd = new QPushButton("Add", right);
-    auto* btnDel = new QPushButton("Remove", right);
+    btnRemove_   = new QPushButton("Remove", right);
     rowCondHead->addStretch();
     rowCondHead->addWidget(btnAdd);
-    rowCondHead->addWidget(btnDel);
+    rowCondHead->addWidget(btnRemove_);
     rLay->addLayout(rowCondHead);
 
     twConds_ = new QTableWidget(0, 4, right);
@@ -113,10 +110,17 @@ void QueryBuilderPage::setupUi() {
     tvResult_->setModel(model_);
 
     connect(cbTable_, &QComboBox::currentIndexChanged, this, &QueryBuilderPage::onTableChanged);
-    connect(btnAdd,   &QPushButton::clicked, this, &QueryBuilderPage::onAddCondition);
-    connect(btnDel,   &QPushButton::clicked, this, &QueryBuilderPage::onRemoveCondition);
-    connect(btnRun,   &QPushButton::clicked, this, &QueryBuilderPage::onRun);
-    connect(btnClear, &QPushButton::clicked, this, &QueryBuilderPage::onClear);
+    connect(btnAdd,   &QPushButton::clicked,            this, &QueryBuilderPage::onAddCondition);
+    connect(btnRemove_, &QPushButton::clicked,          this, &QueryBuilderPage::onRemoveCondition);
+    connect(btnRun,   &QPushButton::clicked,            this, &QueryBuilderPage::onRun);
+    connect(btnClear, &QPushButton::clicked,            this, &QueryBuilderPage::onClear);
+
+    btnRemove_->setEnabled(false);
+
+    connect(twConds_, &QTableWidget::itemSelectionChanged,
+            this,     &QueryBuilderPage::updateRemoveEnabled);
+    connect(twConds_, &QTableWidget::currentCellChanged,
+            this,     [this](int, int, int, int){ updateRemoveEnabled(); });
 }
 
 void QueryBuilderPage::loadTables() {
@@ -140,7 +144,10 @@ void QueryBuilderPage::loadFieldsForCurrent() {
     columns_.clear();
     twConds_->setRowCount(0);
 
-    if (currentBasePath_.isEmpty()) return;
+    if (currentBasePath_.isEmpty()) {
+        updateRemoveEnabled();
+        return;
+    }
     try {
         Table t; t.open(currentBasePath_.toStdString());
         const Schema s = t.getSchema();
@@ -156,6 +163,8 @@ void QueryBuilderPage::loadFieldsForCurrent() {
     } catch (const std::exception& ex) {
         QMessageBox::warning(this, "Query Builder", QString("Cannot read schema:\n%1").arg(ex.what()));
     }
+
+    updateRemoveEnabled();
 }
 
 void QueryBuilderPage::onAddCondition() {
@@ -179,6 +188,8 @@ void QueryBuilderPage::onAddCondition() {
 
     setRowEditorTypes(r);
     connect(cbField, &QComboBox::currentIndexChanged, this, [this, r](int){ setRowEditorTypes(r); });
+
+    updateRemoveEnabled();
 }
 
 void QueryBuilderPage::setRowEditorTypes(int row) {
@@ -214,10 +225,40 @@ void QueryBuilderPage::setRowEditorTypes(int row) {
 }
 
 void QueryBuilderPage::onRemoveCondition() {
-    auto sel = twConds_->selectionModel()->selectedRows();
-    if (sel.isEmpty()) return;
-    std::sort(sel.begin(), sel.end(), [](auto a, auto b){ return a.row()>b.row(); });
-    for (const auto& idx : sel) twConds_->removeRow(idx.row());
+    if (!twConds_ || twConds_->rowCount() == 0) {
+        updateRemoveEnabled();
+        return;
+    }
+
+    QList<int> rows;
+
+    const auto selRows = twConds_->selectionModel() ? twConds_->selectionModel()->selectedRows() : QModelIndexList{};
+    for (const auto& idx : selRows) rows << idx.row();
+
+    if (rows.isEmpty() && twConds_->selectionModel()) {
+        const auto selIdx = twConds_->selectionModel()->selectedIndexes();
+        for (const auto& idx : selIdx) rows << idx.row();
+    }
+
+    if (rows.isEmpty()) {
+        const int r = twConds_->currentRow();
+        if (r >= 0) rows << r;
+    }
+
+    if (rows.isEmpty()) {
+        QMessageBox::information(this, "Query Builder", "Select one or more condition rows to remove.");
+        updateRemoveEnabled();
+        return;
+    }
+
+    rows = QList<int>(QSet<int>(rows.begin(), rows.end()).values());
+    std::sort(rows.begin(), rows.end(), std::greater<int>());
+    for (int r : rows) {
+        if (r >= 0 && r < twConds_->rowCount())
+            twConds_->removeRow(r);
+    }
+
+    updateRemoveEnabled();
 }
 
 void QueryBuilderPage::onRun() {
@@ -233,6 +274,7 @@ void QueryBuilderPage::onClear() {
     QueryModel::Spec s;
     model_->run(s);
     labInfo_->setText("Rows: 0");
+    updateRemoveEnabled();
 }
 
 int QueryBuilderPage::currentFieldIndexByName(const QString& name) const {
@@ -298,10 +340,15 @@ void QueryBuilderPage::buildAndRun() {
     labInfo_->setText(QString("Rows: %1").arg(model_->rowCount()));
 }
 
-void QueryBuilderPage::onFieldsToggleAll() {
-    bool anyUnchecked = false;
-    for (int i=0;i<lwFields_->count(); ++i)
-        if (lwFields_->item(i)->checkState() != Qt::Checked) { anyUnchecked = true; break; }
-    for (int i=0;i<lwFields_->count(); ++i)
-        lwFields_->item(i)->setCheckState(anyUnchecked ? Qt::Checked : Qt::Unchecked);
+void QueryBuilderPage::updateRemoveEnabled() {
+    bool any = false;
+    if (twConds_ && twConds_->rowCount() > 0) {
+        if (auto* sm = twConds_->selectionModel()) {
+            if (!sm->selectedRows().isEmpty() || !sm->selectedIndexes().isEmpty())
+                any = true;
+        }
+        if (!any && twConds_->currentRow() >= 0)
+            any = true;
+    }
+    if (btnRemove_) btnRemove_->setEnabled(any);
 }
