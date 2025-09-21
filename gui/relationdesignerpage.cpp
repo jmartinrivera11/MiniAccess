@@ -206,6 +206,39 @@ static inline QString basePathForTableName(const QString& projectDir, const QStr
     return QDir(projectDir).filePath(tableName);
 }
 
+static QString normBase(const QString& s) {
+    QString out;
+    out.reserve(s.size());
+    for (QChar c : s) {
+        if (c.isLetterOrNumber()) out.append(c.toLower());
+    }
+    return out;
+}
+
+static QString stripEdgeId(QString n) {
+    if (n.startsWith("id") && n.size() > 2) {
+        n = n.mid(2);
+    }
+    if (n.endsWith("id") && n.size() > 2) {
+        n.chop(2);
+    }
+    return n;
+}
+
+static bool namesEqualOrSimilar(const QString& a, const QString& b) {
+    const QString na = normBase(a);
+    const QString nb = normBase(b);
+    if (na == nb) return true;
+
+    const QString sa = stripEdgeId(na);
+    const QString sb = stripEdgeId(nb);
+    if (sa == nb) return true;
+    if (na == sb) return true;
+    if (sa == sb) return true;
+
+    return false;
+}
+
 RelationDesignerPage::RelationDesignerPage(const QString& projectDir, QWidget* parent)
     : QWidget(parent)
     , scene_(new QGraphicsScene(this))
@@ -455,10 +488,6 @@ bool RelationDesignerPage::canFormRelation(const QString& type,
                                            const QString& rt, const QString& rf,
                                            QString& whyNot) const
 {
-    auto equalOrSimilar = [](const QString& a, const QString& b) {
-        return a.compare(b, Qt::CaseInsensitive) == 0;
-    };
-
     if (!boxes_.contains(lt) || !boxes_.contains(rt)) {
         whyNot = tr("Ambas tablas deben estar en el lienzo.");
         return false;
@@ -505,15 +534,17 @@ bool RelationDesignerPage::canFormRelation(const QString& type,
             whyNot = tr("1:1 requiere PK en ambas tablas (faltante en %1 o %2).").arg(lt, rt);
             return false;
         }
-        if (!equalOrSimilar(lf, pkLeft)) {
-            whyNot = tr("En 1:1, el campo izquierdo debe ser la PK de '%1' (esperado: %2).").arg(lt, pkLeft);
+        if (!namesEqualOrSimilar(lf, pkLeft)) {
+            whyNot = tr("En 1:1, el campo izquierdo debe ser la PK de '%1' (esperado similar a '%2').")
+            .arg(lt, pkLeft);
             return false;
         }
-        if (!equalOrSimilar(rf, pkRight)) {
-            whyNot = tr("En 1:1, el campo derecho debe ser la PK de '%1' (esperado: %2).").arg(rt, pkRight);
+        if (!namesEqualOrSimilar(rf, pkRight)) {
+            whyNot = tr("En 1:1, el campo derecho debe ser la PK de '%1' (esperado similar a '%2').")
+            .arg(rt, pkRight);
             return false;
         }
-        if (!equalOrSimilar(lf, rf)) {
+        if (!namesEqualOrSimilar(lf, rf)) {
             whyNot = tr("En 1:1, los nombres deben ser iguales o similares (p. ej. 'idAlumno', 'IDAlumno'). "
                         "Recibido: '%1' vs '%2'.").arg(lf, rf);
             return false;
@@ -522,12 +553,12 @@ bool RelationDesignerPage::canFormRelation(const QString& type,
     }
 
     if (type == "1:N") {
-        if (pkRight.isEmpty() || rf.compare(pkRight, Qt::CaseInsensitive) != 0) {
-            whyNot = tr("En 1:N, el campo del lado derecho debe ser la PK de '%1' (esperado: %2).")
+        if (pkRight.isEmpty() || !namesEqualOrSimilar(rf, pkRight)) {
+            whyNot = tr("En 1:N, el campo del lado derecho debe ser la PK de '%1' (esperado similar a '%2').")
             .arg(rt, pkRight.isEmpty()? QStringLiteral("<sin PK>") : pkRight);
             return false;
         }
-        if (!equalOrSimilar(lf, rf)) {
+        if (!namesEqualOrSimilar(lf, rf)) {
             whyNot = tr("1:N requiere nombres iguales o similares: FK '%1' debe llamarse como la PK '%2'.")
             .arg(lf, rf);
             return false;
@@ -587,8 +618,17 @@ void RelationDesignerPage::addRelationToGrid(const VisualRelation& vr) {
     const int row = relationsGrid_->rowCount();
     relationsGrid_->insertRow(row);
 
-    auto mkItem = [&](const QString& s){ auto* it = new QTableWidgetItem(s); it->setFlags(it->flags() ^ Qt::ItemIsEditable); return it; };
-    auto mkChk  = [&](bool v){ auto* it = new QTableWidgetItem(); it->setFlags(it->flags() | Qt::ItemIsUserCheckable); it->setCheckState(v?Qt::Checked:Qt::Unchecked); return it; };
+    auto mkItem = [&](const QString& s){
+        auto* it = new QTableWidgetItem(s);
+        it->setFlags(it->flags() ^ Qt::ItemIsEditable);
+        return it;
+    };
+    auto mkChk  = [&](bool v){
+        auto* it = new QTableWidgetItem();
+        it->setFlags(it->flags() | Qt::ItemIsUserCheckable);
+        it->setCheckState(v?Qt::Checked:Qt::Unchecked);
+        return it;
+    };
 
     relationsGrid_->setItem(row, 0, mkItem(vr.leftTable));
     relationsGrid_->setItem(row, 1, mkItem(vr.leftField));

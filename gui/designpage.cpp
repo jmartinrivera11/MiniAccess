@@ -28,6 +28,7 @@
 #include <QApplication>
 #include <QTableWidgetItem>
 #include <QSet>
+#include <QJsonArray>
 
 using namespace ma;
 
@@ -314,6 +315,140 @@ static bool savePrimaryKeyNameForBase(const QString& basePath, const QString& pk
     return savePk(basePath, pkName);
 }
 
+static QString projectDirFromBase(const QString& basePath) {
+    return QFileInfo(basePath).dir().absolutePath();
+}
+
+static bool fieldIsReferencedInRelations(const QString& projectDir,
+                                         const QString& table,
+                                         const QString& field,
+                                         QString* relDescOut)
+{
+    const QString relFile = QDir(projectDir).filePath("relations.json");
+    QFile f(relFile);
+    if (!f.exists() || !f.open(QIODevice::ReadOnly)) return false;
+
+    const auto doc = QJsonDocument::fromJson(f.readAll());
+    f.close();
+
+    QJsonArray arr;
+    if (doc.isObject()) {
+        const QJsonObject ro = doc.object();
+        if (ro.contains("relations") && ro.value("relations").isArray())
+            arr = ro.value("relations").toArray();
+        else if (ro.contains("version") && ro.value("version").toInt()==2 && ro.contains("nodes"))
+            arr = ro.value("relations").toArray();
+    } else if (doc.isArray()) {
+        arr = doc.array();
+    }
+
+    const auto eq = [](const QString& a, const QString& b){
+        return a.compare(b, Qt::CaseInsensitive) == 0;
+    };
+
+    for (const auto& v : arr) {
+        const QJsonObject o = v.toObject();
+        const QString lt = o.value("leftTable").toString(o.value("lt").toString());
+        const QString lf = o.value("leftField").toString(o.value("lf").toString());
+        const QString rt = o.value("rightTable").toString(o.value("rt").toString());
+        const QString rf = o.value("rightField").toString(o.value("rf").toString());
+
+        if ((eq(lt, table) && eq(lf, field)) || (eq(rt, table) && eq(rf, field))) {
+            if (relDescOut) {
+                const QString tp = o.value("relType").toString("1:N");
+                *relDescOut = QString("%1.%2 ↔ %3.%4 (%5)")
+                                  .arg(lt, lf, rt, rf, tp);
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+static QStringList fieldsReferencedInRelations(const QString& projectDir,
+                                               const QString& table,
+                                               const QSet<QString>& maybeChangedOldNames)
+{
+    QStringList hits;
+    for (const QString& oldName : maybeChangedOldNames) {
+        QString rel;
+        if (fieldIsReferencedInRelations(projectDir, table, oldName, &rel)) {
+            hits << QString("%1 (en %2)").arg(oldName, rel);
+        }
+    }
+    return hits;
+}
+
+struct RelEntry {
+    QString lt, lf, rt, rf, type;
+};
+
+static QVector<RelEntry> readRelationsForTableDetailed(const QString& projectDir,
+                                                       const QString& tableName)
+{
+    QVector<RelEntry> out;
+    const QString relFile = QDir(projectDir).filePath("relations.json");
+    QFile f(relFile);
+    if (!f.exists() || !f.open(QIODevice::ReadOnly)) return out;
+
+    const auto doc = QJsonDocument::fromJson(f.readAll());
+    f.close();
+
+    QJsonArray arr;
+    if (doc.isObject()) {
+        const QJsonObject ro = doc.object();
+        if (ro.contains("relations") && ro.value("relations").isArray())
+            arr = ro.value("relations").toArray();
+        else if (ro.contains("version") && ro.value("version").toInt()==2 && ro.contains("nodes"))
+            arr = ro.value("relations").toArray();
+    } else if (doc.isArray()) {
+        arr = doc.array();
+    }
+
+    auto eq = [](const QString& a, const QString& b){
+        return a.compare(b, Qt::CaseInsensitive) == 0;
+    };
+
+    for (const auto& v : arr) {
+        const QJsonObject o = v.toObject();
+        RelEntry e;
+        e.lt   = o.value("leftTable").toString(o.value("lt").toString());
+        e.lf   = o.value("leftField").toString(o.value("lf").toString());
+        e.rt   = o.value("rightTable").toString(o.value("rt").toString());
+        e.rf   = o.value("rightField").toString(o.value("rf").toString());
+        e.type = o.value("relType").toString("1:N");
+
+        if (eq(e.lt, tableName) || eq(e.rt, tableName)) out.push_back(e);
+    }
+    return out;
+}
+
+static bool loadSchemaForTableBase(const QString& projectDir,
+                                   const QString& tableName,
+                                   ma::Schema& out)
+{
+    try {
+        const QString base = QDir(projectDir).filePath(tableName);
+        ma::Table t; t.open(base.toStdString());
+        out = t.getSchema();
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+static const ma::Field* findFieldCI(const ma::Schema& s, const QString& qname) {
+    for (const auto& f : s.fields) {
+        if (QString::fromStdString(f.name).compare(qname, Qt::CaseInsensitive) == 0)
+            return &f;
+    }
+    return nullptr;
+}
+
+static bool isTextualType(const ma::Field& f) {
+    return (f.type == ma::FieldType::String || f.type == ma::FieldType::CharN);
+}
+
 DesignPage::DesignPage(const QString& basePath, QWidget* parent)
     : QWidget(parent), basePath_(basePath) {
     setupUi();
@@ -591,6 +726,7 @@ void DesignPage::saveDesign() {
     const QString meta = base + ".meta";
     const QString mad  = base + ".mad";
     const QString tableName = QFileInfo(base).fileName();
+    const QString projDir   = QFileInfo(base).dir().absolutePath();
 
     const bool exists = QFileInfo::exists(meta) || QFileInfo::exists(mad);
     if (!exists) {
@@ -607,8 +743,8 @@ void DesignPage::saveDesign() {
                 relPage->revalidateAllRelations();
                 relPage->refreshTableBox(tableName);
             }
-
             updateLastNamesBuffer();
+
         } catch (const std::exception& ex) {
             banner_->setText(QString("Error creating table: %1").arg(ex.what()));
             banner_->show();
@@ -624,6 +760,161 @@ void DesignPage::saveDesign() {
         rowCount = told.scanCount();
     } catch (const std::exception& ex) {
         banner_->setText(QString("Error opening current table: %1").arg(ex.what()));
+        banner_->show();
+        return;
+    }
+
+    auto toSet = [](const ma::Schema& s){
+        QSet<QString> ss;
+        for (const auto& f : s.fields)
+            ss.insert(QString::fromStdString(f.name).toLower());
+        return ss;
+    };
+    const QSet<QString> oldSet = toSet(oldS);
+    const QSet<QString> newSet = toSet(newS);
+
+    QSet<QString> removedOrRenamed;
+    for (const QString& n : oldSet) if (!newSet.contains(n)) removedOrRenamed.insert(n);
+
+    if (!removedOrRenamed.isEmpty()) {
+        QStringList hits = fieldsReferencedInRelations(projDir, tableName, removedOrRenamed);
+        if (!hits.isEmpty()) {
+            const QString msg =
+                QString("Cannot rename/delete fields with active relationships.\n"
+                        "Break or update these relationships first:\n• %1")
+                    .arg(hits.join("\n• "));
+            banner_->setText(msg);
+            banner_->show();
+            return;
+        }
+    }
+
+    QMap<QString, ma::Field> oldMap, newMap;
+    for (const auto& f : oldS.fields) oldMap.insert(QString::fromStdString(f.name).toLower(), f);
+    for (const auto& f : newS.fields) newMap.insert(QString::fromStdString(f.name).toLower(), f);
+
+    const QVector<RelEntry> relsThis = readRelationsForTableDetailed(projDir, tableName);
+
+    auto fieldReferenced = [&](const QString& fieldNameCI)->bool {
+        for (const auto& r : relsThis) {
+            if (r.lf.compare(fieldNameCI, Qt::CaseInsensitive)==0 && r.lt.compare(tableName, Qt::CaseInsensitive)==0)
+                return true;
+            if (r.rf.compare(fieldNameCI, Qt::CaseInsensitive)==0 && r.rt.compare(tableName, Qt::CaseInsensitive)==0)
+                return true;
+        }
+        return false;
+    };
+
+    QStringList blockedType;
+    for (auto it = oldMap.cbegin(); it != oldMap.cend(); ++it) {
+        const QString key = it.key();
+        if (!newMap.contains(key)) continue;
+
+        const ma::Field& of = it.value();
+        const ma::Field& nf = newMap.value(key);
+        if (of.type != nf.type) {
+            if (fieldReferenced(key)) {
+                blockedType << QString("%1.%2 (%3 → %4)")
+                                   .arg(tableName,
+                                        QString::fromStdString(of.name),
+                                        QString::number((int)of.type),
+                                        QString::number((int)nf.type));
+            }
+        }
+    }
+    if (!blockedType.isEmpty()) {
+        banner_->setText(QString("Cannot change data type of fields that are part of relationships:\n\n• %1\n\n"
+                                 "Break/edit the relationship(s) first.")
+                             .arg(blockedType.join("\n• ")));
+        banner_->show();
+        return;
+    }
+
+    QStringList blockedSize;
+    for (auto it = oldMap.cbegin(); it != oldMap.cend(); ++it) {
+        const QString key = it.key();
+        if (!newMap.contains(key)) continue;
+
+        const ma::Field& of = it.value();
+        const ma::Field& nf = newMap.value(key);
+
+        if (!isTextualType(of) || !isTextualType(nf)) continue;
+        if (of.size == nf.size) continue;
+
+        if (!fieldReferenced(key)) continue;
+
+        const uint16_t oldLen = of.size;
+        const uint16_t newLen = nf.size;
+
+        if (newLen < oldLen) {
+            blockedSize << QString("%1.%2 (%3 → %4) — shrinking not allowed with active relationships")
+                               .arg(tableName,
+                                    QString::fromStdString(of.name))
+                               .arg(oldLen).arg(newLen);
+            continue;
+        }
+
+        for (const auto& r : relsThis) {
+            bool isLeftThis  = (r.lt.compare(tableName, Qt::CaseInsensitive)==0 &&
+                               r.lf.compare(QString::fromStdString(of.name), Qt::CaseInsensitive)==0);
+            bool isRightThis = (r.rt.compare(tableName, Qt::CaseInsensitive)==0 &&
+                                r.rf.compare(QString::fromStdString(of.name), Qt::CaseInsensitive)==0);
+            if (!isLeftThis && !isRightThis) continue;
+
+            const QString otherTable = isLeftThis ? r.rt : r.lt;
+            const QString otherField = isLeftThis ? r.rf : r.lf;
+
+            ma::Schema otherS;
+            if (!loadSchemaForTableBase(projDir, otherTable, otherS)) {
+                blockedSize << QString("%1.%2 — cannot read schema of related table '%3'")
+                                   .arg(tableName, QString::fromStdString(of.name), otherTable);
+                continue;
+            }
+            const ma::Field* ofOther = findFieldCI(otherS, otherField);
+            if (!ofOther) {
+                blockedSize << QString("%1.%2 — related field '%3.%4' not found")
+                                   .arg(tableName, QString::fromStdString(of.name),
+                                        otherTable, otherField);
+                continue;
+            }
+
+            if (ofOther->type != nf.type) {
+                blockedSize << QString("%1.%2 — type mismatch with related '%3.%4'")
+                                   .arg(tableName, QString::fromStdString(of.name),
+                                        otherTable, otherField);
+                continue;
+            }
+
+            if (r.type == "1:N") {
+                if (isLeftThis) {
+                    if (isTextualType(*ofOther)) {
+                        if (newLen > ofOther->size) {
+                            blockedSize << QString("1:N %1.%2 — FK length %3 exceeds parent PK %4.%5 length %6")
+                                               .arg(tableName, QString::fromStdString(of.name))
+                                               .arg(newLen)
+                                               .arg(otherTable, otherField)
+                                               .arg(ofOther->size);
+                        }
+                    }
+                } else {
+                }
+            } else if (r.type == "1:1") {
+                if (!isTextualType(*ofOther)) continue;
+                if (newLen != ofOther->size) {
+                    blockedSize << QString("1:1 %1.%2 — new length %3 must match %4.%5 length %6")
+                                       .arg(tableName, QString::fromStdString(of.name))
+                                       .arg(newLen)
+                                       .arg(otherTable, otherField)
+                                       .arg(ofOther->size);
+                }
+            } else {
+            }
+        }
+    }
+
+    if (!blockedSize.isEmpty()) {
+        banner_->setText(QString("Size change not allowed due to active relationships:\n\n• %1")
+                             .arg(blockedSize.join("\n• ")));
         banner_->show();
         return;
     }
@@ -686,7 +977,7 @@ void DesignPage::saveDesign() {
         tnew.close();
 
         QFileInfo bi(base);
-        const QString dir = bi.dir().absolutePath();
+        const QString dir  = bi.dir().absolutePath();
         const QString pref = bi.fileName() + ".";
         QDir d(dir);
         const QStringList idxs = d.entryList(QStringList() << (pref + "*.idx"), QDir::Files);
