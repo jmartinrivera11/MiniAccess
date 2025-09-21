@@ -450,17 +450,21 @@ int RelationDesignerPage::findRelationIndex(const QString& lt, const QString& lf
     return -1;
 }
 
-bool RelationDesignerPage::canFormRelation(const QString& type, const QString& lt, const QString& lf,
-                                           const QString& rt, const QString& rf, QString& whyNot) const {
+bool RelationDesignerPage::canFormRelation(const QString& type,
+                                           const QString& lt, const QString& lf,
+                                           const QString& rt, const QString& rf,
+                                           QString& whyNot) const
+{
     if (!boxes_.contains(lt) || !boxes_.contains(rt)) {
         whyNot = tr("Ambas tablas deben estar en el lienzo.");
         return false;
     }
-    if (lt == rt) {
+    if (lt.compare(rt, Qt::CaseInsensitive) == 0) {
         whyNot = tr("Las relaciones deben ser entre tablas distintas.");
         return false;
     }
-    if (lt == rt && lf == rf) {
+    if (lt.compare(rt, Qt::CaseInsensitive) == 0 &&
+        lf.compare(rf, Qt::CaseInsensitive) == 0) {
         whyNot = tr("No puedes relacionar un campo consigo mismo.");
         return false;
     }
@@ -491,21 +495,32 @@ bool RelationDesignerPage::canFormRelation(const QString& type, const QString& l
     }
 
     const QString pkRight = self->primaryKeyForTable(rt);
+
     if (type == "1:N" || type == "1:1") {
-        if (pkRight.isEmpty() || rf != pkRight) {
+        if (pkRight.isEmpty() || rf.compare(pkRight, Qt::CaseInsensitive) != 0) {
             whyNot = tr("El campo del lado derecho debe ser la PK de la tabla padre (%1.%2).")
-            .arg(rt, pkRight.isEmpty()? QStringLiteral("<sin PK>") : pkRight);
+            .arg(rt, pkRight.isEmpty() ? QStringLiteral("<sin PK>") : pkRight);
             return false;
         }
+        if (lf.compare(rf, Qt::CaseInsensitive) != 0) {
+            whyNot = tr("%1 requiere mismo nombre de campo: FK '%2' debe llamarse igual que la PK '%3'.")
+            .arg(type, lf, rf);
+            return false;
+        }
+        return true;
     }
 
-    if (type == "1:N" && lf != rf) {
-        whyNot = tr("1:N requiere mismo nombre de campo: FK '%1' debe llamarse igual que la PK '%2'.")
-        .arg(lf, rf);
-        return false;
+    if (type == "N:M") {
+        if (pkRight.isEmpty() || rf.compare(pkRight, Qt::CaseInsensitive) != 0) {
+            whyNot = tr("En N:M, el campo derecho debe ser la PK de '%1' (esperado: %2).")
+            .arg(rt, pkRight.isEmpty() ? QStringLiteral("<sin PK>") : pkRight);
+            return false;
+        }
+        return true;
     }
 
-    return true;
+    whyNot = tr("Tipo de relación no soportado: %1").arg(type);
+    return false;
 }
 
 void RelationDesignerPage::updateRelationGeometry(VisualRelation& vr) {
