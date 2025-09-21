@@ -455,6 +455,10 @@ bool RelationDesignerPage::canFormRelation(const QString& type,
                                            const QString& rt, const QString& rf,
                                            QString& whyNot) const
 {
+    auto equalOrSimilar = [](const QString& a, const QString& b) {
+        return a.compare(b, Qt::CaseInsensitive) == 0;
+    };
+
     if (!boxes_.contains(lt) || !boxes_.contains(rt)) {
         whyNot = tr("Ambas tablas deben estar en el lienzo.");
         return false;
@@ -485,7 +489,6 @@ bool RelationDesignerPage::canFormRelation(const QString& type,
         .arg(lt, lf).arg(tL).arg(rt, rf).arg(tR);
         return false;
     }
-
     const quint16 sL = self->sizeFor(lt, lf);
     const quint16 sR = self->sizeFor(rt, rf);
     if (sL > 0 && sR > 0 && sL > sR) {
@@ -494,17 +497,42 @@ bool RelationDesignerPage::canFormRelation(const QString& type,
         return false;
     }
 
+    const QString pkLeft  = self->primaryKeyForTable(lt);
     const QString pkRight = self->primaryKeyForTable(rt);
 
-    if (type == "1:N" || type == "1:1") {
-        if (pkRight.isEmpty() || rf.compare(pkRight, Qt::CaseInsensitive) != 0) {
-            whyNot = tr("El campo del lado derecho debe ser la PK de la tabla padre (%1.%2).")
-            .arg(rt, pkRight.isEmpty() ? QStringLiteral("<sin PK>") : pkRight);
+    if (type == "1:1") {
+        if (pkLeft.isEmpty() || pkRight.isEmpty()) {
+            whyNot = tr("1:1 requiere PK en ambas tablas (faltante en %1 o %2).")
+            .arg(lt, rt);
             return false;
         }
-        if (lf.compare(rf, Qt::CaseInsensitive) != 0) {
-            whyNot = tr("%1 requiere mismo nombre de campo: FK '%2' debe llamarse igual que la PK '%3'.")
-            .arg(type, lf, rf);
+        if (!equalOrSimilar(lf, pkLeft)) {
+            whyNot = tr("En 1:1, el campo izquierdo debe ser la PK de '%1' (esperado: %2).")
+            .arg(lt, pkLeft);
+            return false;
+        }
+        if (!equalOrSimilar(rf, pkRight)) {
+            whyNot = tr("En 1:1, el campo derecho debe ser la PK de '%1' (esperado: %2).")
+            .arg(rt, pkRight);
+            return false;
+        }
+        if (!equalOrSimilar(lf, rf)) {
+            whyNot = tr("En 1:1, los nombres deben ser iguales o similares (p. ej. 'idAlumno', 'IDAlumno'). "
+                        "Recibido: '%1' vs '%2'.").arg(lf, rf);
+            return false;
+        }
+        return true;
+    }
+
+    if (type == "1:N") {
+        if (pkRight.isEmpty() || rf.compare(pkRight, Qt::CaseInsensitive) != 0) {
+            whyNot = tr("En 1:N, el campo del lado derecho debe ser la PK de '%1' (esperado: %2).")
+            .arg(rt, pkRight.isEmpty()? QStringLiteral("<sin PK>") : pkRight);
+            return false;
+        }
+        if (!equalOrSimilar(lf, rf)) {
+            whyNot = tr("1:N requiere nombres iguales o similares: FK '%1' debe llamarse como la PK '%2'.")
+            .arg(lf, rf);
             return false;
         }
         return true;
@@ -513,7 +541,12 @@ bool RelationDesignerPage::canFormRelation(const QString& type,
     if (type == "N:M") {
         if (pkRight.isEmpty() || rf.compare(pkRight, Qt::CaseInsensitive) != 0) {
             whyNot = tr("En N:M, el campo derecho debe ser la PK de '%1' (esperado: %2).")
-            .arg(rt, pkRight.isEmpty() ? QStringLiteral("<sin PK>") : pkRight);
+            .arg(rt, pkRight.isEmpty()? QStringLiteral("<sin PK>") : pkRight);
+            return false;
+        }
+        if (!equalOrSimilar(lf, rf)) {
+            whyNot = tr("En N:M, los nombres de los campos también deben ser iguales o similares. "
+                        "Recibido: '%1' vs '%2'.").arg(lf, rf);
             return false;
         }
         return true;
