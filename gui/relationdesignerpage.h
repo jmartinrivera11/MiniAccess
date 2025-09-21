@@ -114,12 +114,6 @@ private:
                           const QString& rt, const QString& rf,
                           const QString& type) const;
 
-    bool ensureJunctionTable(const QString& aTable, const QString& bTable,
-                             QString& junctionName,
-                             QString& fkAName, QString& fkBName);
-    bool writeMetaUtf8Len(const QString& tableName,
-                          const QVector<meta::FieldInfo>& fields);
-
     QString jsonPath() const;
     bool saveToJsonV2() const;
     bool loadFromJsonV2();
