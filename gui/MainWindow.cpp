@@ -29,6 +29,7 @@
 #include <QCoreApplication>
 #include <QThread>
 #include "../core/relations_io.h"
+#include "reportquickdialog.h"
 #include <QJsonArray>
 #include <QJsonObject>
 
@@ -98,6 +99,9 @@ void MainWindow::setupUi() {
     ribbon->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
     ribbon->setMovable(false);
 
+    QMenu* reportsMenu = menuBar()->addMenu("&Reports");
+    QAction* actReportSimple = reportsMenu->addAction(QIcon(":/icons/icons/print.svg"), "Simple Report...");
+
     auto makeGroup = [&](const QString& text){
         QWidget* sep = new QWidget(this); sep->setFixedWidth(1); ribbon->addWidget(sep);
         auto* lab = new QLabel(text, this); lab->setObjectName("RibbonGroupLabel"); ribbon->addWidget(lab);
@@ -132,6 +136,7 @@ void MainWindow::setupUi() {
     connect(actOpenProject,  &QAction::triggered, this, &MainWindow::openProject);
     connect(actCloseProject, &QAction::triggered, this, &MainWindow::closeCurrentProject);
     connect(actDeleteProj,   &QAction::triggered, this, &MainWindow::deleteCurrentProject);
+    connect(actReportSimple, &QAction::triggered, this, &MainWindow::openReportSimple);
     connect(actQuit,         &QAction::triggered, this, &QWidget::close);
 
     connect(dock_, &ObjectsDock::deleteTableRequested, this, &MainWindow::deleteTableByBase);
@@ -665,4 +670,13 @@ void MainWindow::deleteSelectedTable() {
         return;
     }
     deleteTableByBase(base);
+}
+
+void MainWindow::openReportSimple() {
+    if (currentProjectPath_.isEmpty()) {
+        QMessageBox::information(this, "Report", "Open or create a Project first.");
+        return;
+    }
+    ReportQuickDialog dlg(currentProjectPath_, this);
+    dlg.exec();
 }

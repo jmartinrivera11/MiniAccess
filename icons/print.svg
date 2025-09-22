@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"
+     viewBox="0 0 24 24" fill="none" stroke="currentColor"
+     stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+  <!-- cuerpo de la impresora -->
+  <rect x="4" y="9" width="16" height="8" rx="2" ry="2"/>
+  <!-- hoja superior -->
+  <rect x="6" y="3" width="12" height="6" rx="1" ry="1"/>
+  <!-- bandeja inferior -->
+  <rect x="6" y="17" width="12" height="4" rx="1" ry="1"/>
+  <!-- led/botón -->
+  <circle cx="18" cy="12" r="1"/>
+</svg>

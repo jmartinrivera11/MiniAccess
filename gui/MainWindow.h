@@ -36,6 +36,7 @@ private slots:
     void deleteCurrentProject();
     void deleteTableByBase(const QString& base);
     void deleteSelectedTable();
+    void openReportSimple();
 
 private:
     void setupUi();

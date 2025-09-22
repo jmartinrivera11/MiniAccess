@@ -22,5 +22,6 @@
         <file>icons/close.svg</file>
         <file>icons/pk.svg</file>
         <file>icons/pk_black.svg</file>
+        <file>icons/print.svg</file>
     </qresource>
 </RCC>
