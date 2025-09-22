@@ -2,13 +2,21 @@
 #include <QWidget>
 #include <QMap>
 #include <QJsonObject>
-#include <QJsonArray>
+#include <memory>
 
 class QLineEdit;
 class QCheckBox;
 class QDateEdit;
 class QPushButton;
 class QLabel;
+
+namespace ma {
+struct Schema;
+struct Field;
+class Table;
+}
+
+class TableModel;
 
 class FormRunnerPage : public QWidget {
     Q_OBJECT
@@ -43,25 +51,30 @@ private slots:
 private:
     void buildUi();
     void rebuildControls();
-    void bindRecordToUi();
-    void pullUiToRecord();
 
-    bool loadData();
-    bool saveData();
+    void bindRowToUi(int row);
+    void commitField(const QString& fieldName);
+
+    int  rowCount() const;
+    int  fieldColumn(const QString& fieldName) const;
 
     QString projectDir_;
     QJsonObject formDef_;
     QString formName_;
     QString baseTable_;
+    QString basePath_;
 
-    QJsonArray data_;
-    int current_{-1};
+    std::unique_ptr<ma::Table>  table_;
+    std::unique_ptr<TableModel> model_;
+    std::unique_ptr<ma::Schema> schema_;
+
+    int  current_{-1};
     bool dirty_{false};
 
     QMap<QString, QWidget*> editors_;
 
-    QWidget* scrollBody_{nullptr};
-    QLabel*  infoLabel_{nullptr};
+    QWidget*     scrollBody_{nullptr};
+    QLabel*      infoLabel_{nullptr};
     QPushButton* btnFirst_{nullptr};
     QPushButton* btnPrev_{nullptr};
     QPushButton* btnNext_{nullptr};

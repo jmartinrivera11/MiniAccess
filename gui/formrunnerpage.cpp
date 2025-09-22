@@ -1,4 +1,5 @@
 #include "FormRunnerPage.h"
+
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QScrollArea>
@@ -11,7 +12,24 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QDate>
+#include <QDir>
+#include <QFileInfo>
 #include "../core/forms_io.h"
+#include "../core/Table.h"
+#include "../core/DisplayFmt.h"
+#include "TableModel.h"
+
+using namespace ma;
+
+namespace {
+static int fieldIndexByName(const ma::Schema& s, const QString& name) {
+    for (int i=0;i<(int)s.fields.size();++i) {
+        if (QString::fromStdString(s.fields[i].name).compare(name, Qt::CaseInsensitive)==0)
+            return i;
+    }
+    return -1;
+}
+}
 
 FormRunnerPage::FormRunnerPage(const QString& projectDir,
                                const QJsonObject& formDef,
@@ -22,10 +40,19 @@ FormRunnerPage::FormRunnerPage(const QString& projectDir,
 {
     formName_  = formDef_.value("name").toString();
     baseTable_ = formDef_.value("table").toString();
+    basePath_  = QDir(projectDir_).filePath(baseTable_);
+
     buildUi();
+
+    table_  = std::make_unique<ma::Table>();
+    table_->open(basePath_.toStdString());
+    schema_ = std::make_unique<ma::Schema>(table_->getSchema());
+
+    model_  = std::make_unique<TableModel>(table_.get(), basePath_, this);
+
     rebuildControls();
-    loadData();
-    if (!data_.isEmpty()) { current_ = 0; bindRecordToUi(); }
+
+    if (rowCount() > 0) { current_ = 0; bindRowToUi(current_); }
     else { onAdd(); }
 }
 
@@ -42,9 +69,9 @@ void FormRunnerPage::buildUi() {
     btnDel_   = new QPushButton("Eliminar", this);
     btnSave_  = new QPushButton("Guardar", this);
     btnClose_ = new QPushButton("Cerrar", this);
-    for (auto* b : {btnFirst_,btnPrev_,btnNext_,btnLast_,btnAdd_,btnDel_,btnSave_,btnClose_}) {
+    for (auto* b : {btnFirst_,btnPrev_,btnNext_,btnLast_,btnAdd_,btnDel_,btnSave_,btnClose_})
         b->setMinimumHeight(28);
-    }
+
     bar->addWidget(btnFirst_);
     bar->addWidget(btnPrev_);
     bar->addWidget(btnNext_);
@@ -60,7 +87,6 @@ void FormRunnerPage::buildUi() {
     scroll->setWidgetResizable(true);
     scrollBody_ = new QWidget(scroll);
     scroll->setWidget(scrollBody_);
-
     root->addWidget(scroll, 1);
 
     infoLabel_ = new QLabel(this);
@@ -78,16 +104,20 @@ void FormRunnerPage::buildUi() {
 }
 
 void FormRunnerPage::rebuildControls() {
-    auto* body = new QVBoxLayout(scrollBody_);
-    body->setContentsMargins(16,16,16,16);
     qDeleteAll(scrollBody_->findChildren<QWidget*>(QString(), Qt::FindDirectChildrenOnly));
     editors_.clear();
+
+    auto* body = new QVBoxLayout(scrollBody_);
+    body->setContentsMargins(16,16,16,16);
 
     const QJsonArray ctrls = formDef_.value("controls").toArray();
     for (const auto& v : ctrls) {
         const QJsonObject c = v.toObject();
         const QString type  = c.value("type").toString("TextBox");
         const QString field = c.value("field").toString();
+        if (field.isEmpty()) continue;
+
+        const int col = fieldIndexByName(*schema_, field);
 
         auto* row = new QHBoxLayout();
         auto* lab = new QLabel(field + ":", scrollBody_);
@@ -105,118 +135,164 @@ void FormRunnerPage::rebuildControls() {
             ed = de;
         } else {
             auto* le = new QLineEdit(scrollBody_);
-            connect(le, &QLineEdit::textChanged, this, &FormRunnerPage::onFieldEdited);
+            connect(le, &QLineEdit::editingFinished, this, &FormRunnerPage::onFieldEdited);
             ed = le;
         }
+
         row->addWidget(ed, 1);
         body->addLayout(row);
-
-        if (!field.isEmpty() && ed) editors_.insert(field, ed);
+        editors_.insert(field, ed);
     }
     body->addStretch(1);
 }
 
-bool FormRunnerPage::loadData() {
-    QJsonArray arr;
-    if (!forms::loadFormData(projectDir_, formName_, arr)) {
-        QMessageBox::warning(this, "Forms", "Could not load form data file.");
-        return false;
-    }
-    data_ = arr;
-    infoLabel_->setText(QString("Loaded %1 record(s)").arg(data_.size()));
-    return true;
+int FormRunnerPage::rowCount() const {
+    return model_ ? model_->rowCount() : 0;
 }
 
-bool FormRunnerPage::saveData() {
-    if (!forms::saveFormData(projectDir_, formName_, data_)) {
-        QMessageBox::warning(this, "Forms", "Could not save form data.");
-        return false;
-    }
-    dirty_ = false;
-    infoLabel_->setText("Saved.");
-    return true;
+int FormRunnerPage::fieldColumn(const QString& fieldName) const {
+    return schema_ ? fieldIndexByName(*schema_, fieldName) : -1;
 }
 
-void FormRunnerPage::bindRecordToUi() {
-    if (current_ < 0 || current_ >= data_.size()) return;
-    const QJsonObject rec = data_.at(current_).toObject();
+void FormRunnerPage::bindRowToUi(int row) {
+    if (!model_ || row < 0 || row >= rowCount()) return;
 
     for (auto it = editors_.cbegin(); it != editors_.cend(); ++it) {
         const QString field = it.key();
         QWidget* ed = it.value();
+        const int col = fieldColumn(field);
+        if (col < 0) continue;
+
+        QModelIndex idx = model_->index(row, col);
 
         if (auto* cb = qobject_cast<QCheckBox*>(ed)) {
+            const QVariant st = model_->data(idx, Qt::CheckStateRole);
             cb->blockSignals(true);
-            cb->setChecked(rec.value(field).toBool(false));
+            cb->setCheckState(st.toInt()==Qt::Checked ? Qt::Checked : Qt::Unchecked);
             cb->blockSignals(false);
-        } else if (auto* de = qobject_cast<QDateEdit*>(ed)) {
+            continue;
+        }
+
+        if (auto* de = qobject_cast<QDateEdit*>(ed)) {
+            const ma::Field& f = schema_->fields[col];
             de->blockSignals(true);
-            const QString s = rec.value(field).toString();
-            QDate d = QDate::fromString(s, Qt::ISODate);
-            if (!d.isValid()) d = QDate::currentDate();
-            de->setDate(d);
+            if (f.type == ma::FieldType::String && ma::isDateTimeFmt(f.size)) {
+                const QVariant v = model_->data(idx, Qt::EditRole);
+                const QDate d = QDate::fromString(v.toString(), Qt::ISODate);
+                de->setDate(d.isValid()? d : QDate::currentDate());
+            } else {
+                const QVariant v = model_->data(idx, Qt::EditRole);
+                bool ok=false; qlonglong secs = v.toLongLong(&ok);
+                QDate d = ok ? QDateTime::fromSecsSinceEpoch(secs).date() : QDate::currentDate();
+                de->setDate(d);
+            }
             de->blockSignals(false);
-        } else if (auto* le = qobject_cast<QLineEdit*>(ed)) {
+            continue;
+        }
+
+        if (auto* le = qobject_cast<QLineEdit*>(ed)) {
+            const QVariant v = model_->data(idx, Qt::EditRole);
             le->blockSignals(true);
-            le->setText(rec.value(field).toVariant().toString());
+            le->setText(v.toString());
             le->blockSignals(false);
+            continue;
         }
     }
-    infoLabel_->setText(QString("Record %1 / %2").arg(current_+1).arg(data_.size()));
+
+    infoLabel_->setText(QString("Record %1 / %2").arg(row+1).arg(rowCount()));
 }
 
-void FormRunnerPage::pullUiToRecord() {
-    if (current_ < 0 || current_ >= data_.size()) return;
-    QJsonObject rec = data_.at(current_).toObject();
+void FormRunnerPage::commitField(const QString& fieldName) {
+    if (!model_ || current_ < 0 || current_ >= rowCount()) return;
 
+    QWidget* ed = editors_.value(fieldName, nullptr);
+    if (!ed) return;
+
+    const int col = fieldColumn(fieldName);
+    if (col < 0) return;
+
+    QModelIndex idx = model_->index(current_, col);
+    const ma::Field& f = schema_->fields[col];
+
+    bool ok = false;
+
+    if (auto* cb = qobject_cast<QCheckBox*>(ed)) {
+        const Qt::CheckState st = cb->checkState();
+        ok = model_->setData(idx, st, Qt::CheckStateRole);
+    } else if (auto* de = qobject_cast<QDateEdit*>(ed)) {
+        if (f.type == ma::FieldType::String && ma::isDateTimeFmt(f.size)) {
+            ok = model_->setData(idx, de->date().toString(Qt::ISODate), Qt::EditRole);
+        } else if (f.type == ma::FieldType::Date) {
+            const qlonglong secs = QDateTime(de->date().startOfDay()).toSecsSinceEpoch();
+            ok = model_->setData(idx, secs, Qt::EditRole);
+        } else {
+            ok = model_->setData(idx, de->date().toString(Qt::ISODate), Qt::EditRole);
+        }
+    } else if (auto* le = qobject_cast<QLineEdit*>(ed)) {
+        ok = model_->setData(idx, le->text(), Qt::EditRole);
+    }
+
+    if (ok) {
+        dirty_ = true;
+        infoLabel_->setText("Edited.");
+    } else {
+        infoLabel_->setText("Edit rejected by constraints.");
+        bindRowToUi(current_);
+    }
+}
+
+void FormRunnerPage::onFieldEdited() {
+    QWidget* ed = qobject_cast<QWidget*>(sender());
+    if (!ed) return;
     for (auto it = editors_.cbegin(); it != editors_.cend(); ++it) {
-        const QString field = it.key();
-        QWidget* ed = it.value();
-
-        if (auto* cb = qobject_cast<QCheckBox*>(ed)) {
-            rec.insert(field, cb->isChecked());
-        } else if (auto* de = qobject_cast<QDateEdit*>(ed)) {
-            rec.insert(field, de->date().toString(Qt::ISODate));
-        } else if (auto* le = qobject_cast<QLineEdit*>(ed)) {
-            rec.insert(field, le->text());
-        }
+        if (it.value() == ed) { commitField(it.key()); break; }
     }
-    data_.replace(current_, rec);
-    dirty_ = true;
 }
 
-void FormRunnerPage::onFieldEdited() { pullUiToRecord(); }
-
-void FormRunnerPage::onFirst() { if (data_.isEmpty()) return; current_ = 0; bindRecordToUi(); }
-void FormRunnerPage::onPrev()  { if (current_>0) { --current_; bindRecordToUi(); } }
-void FormRunnerPage::onNext()  { if (current_+1 < data_.size()) { ++current_; bindRecordToUi(); } }
-void FormRunnerPage::onLast()  { if (!data_.isEmpty()) { current_ = data_.size()-1; bindRecordToUi(); } }
+void FormRunnerPage::onFirst() { if (rowCount() == 0) return; current_ = 0; bindRowToUi(current_); }
+void FormRunnerPage::onPrev()  { if (current_ > 0) { --current_; bindRowToUi(current_); } }
+void FormRunnerPage::onNext()  { if (current_+1 < rowCount()) { ++current_; bindRowToUi(current_); } }
+void FormRunnerPage::onLast()  { if (rowCount() > 0) { current_ = rowCount()-1; bindRowToUi(current_); } }
 
 void FormRunnerPage::onAdd() {
-    QJsonObject rec;
-    for (auto it = editors_.cbegin(); it != editors_.cend(); ++it) {
-        const QString field = it.key();
-        rec.insert(field, QJsonValue());
+    if (!model_) return;
+    const int pos = rowCount();
+    if (!model_->insertRows(pos, 1)) {
+        infoLabel_->setText("Insert rejected.");
+        return;
     }
-    data_.push_back(rec);
-    current_ = data_.size()-1;
-    bindRecordToUi();
+    current_ = rowCount() - 1;
+    bindRowToUi(current_);
     dirty_ = true;
 }
 
 void FormRunnerPage::onDelete() {
-    if (current_ < 0 || current_ >= data_.size()) return;
+    if (!model_ || current_ < 0 || current_ >= rowCount()) return;
     const auto ret = QMessageBox::question(this, "Forms", "Delete current record?",
                                            QMessageBox::Yes|QMessageBox::No, QMessageBox::No);
     if (ret != QMessageBox::Yes) return;
-    data_.removeAt(current_);
-    if (current_ >= data_.size()) current_ = data_.size()-1;
-    dirty_ = true;
-    if (current_ >= 0) bindRecordToUi();
+
+    if (!model_->removeRows(current_, 1)) {
+        infoLabel_->setText("Delete rejected (RI/cascade).");
+        return;
+    }
+    if (current_ >= rowCount()) current_ = rowCount()-1;
+    if (current_ >= 0) bindRowToUi(current_);
     else infoLabel_->setText("No records");
+    dirty_ = true;
 }
 
-void FormRunnerPage::onSave() { saveData(); }
+void FormRunnerPage::onSave() {
+    dirty_ = false;
+    if (model_) model_->reload();
+    if (rowCount() == 0) { current_ = -1; infoLabel_->setText("No records"); }
+    else {
+        if (current_ < 0) current_ = 0;
+        if (current_ >= rowCount()) current_ = rowCount()-1;
+        bindRowToUi(current_);
+    }
+    infoLabel_->setText("Saved.");
+}
 
 void FormRunnerPage::onClose() {
     if (dirty_) {
@@ -224,15 +300,20 @@ void FormRunnerPage::onClose() {
                                                "Save changes before closing?",
                                                QMessageBox::Yes|QMessageBox::No|QMessageBox::Cancel, QMessageBox::Yes);
         if (ret == QMessageBox::Cancel) return;
-        if (ret == QMessageBox::Yes) {
-            if (!saveData()) return;
-        }
+        if (ret == QMessageBox::Yes) onSave();
     }
     emit requestClose(this);
 }
 
-bool FormRunnerPage::insertRow() { onAdd(); return true; }
+bool FormRunnerPage::insertRow()  { onAdd();    return true; }
 bool FormRunnerPage::deleteRows() { onDelete(); return true; }
-bool FormRunnerPage::refresh() { return loadData(); }
-bool FormRunnerPage::zoomInView() { return true; }
+bool FormRunnerPage::refresh()    {
+    if (model_) model_->reload();
+    if (rowCount()==0) { current_=-1; infoLabel_->setText("No records"); return true; }
+    if (current_ < 0) current_ = 0;
+    if (current_ >= rowCount()) current_ = rowCount()-1;
+    bindRowToUi(current_);
+    return true;
+}
+bool FormRunnerPage::zoomInView()  { return true; }
 bool FormRunnerPage::zoomOutView() { return true; }
