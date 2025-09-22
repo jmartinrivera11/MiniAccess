@@ -52,7 +52,7 @@ bool migratePkIfNeeded(const QString& basePath) {
     }
     const bool ok = writePkToFileAtomic(canonical, pk);
     if (!ok) {
-        qWarning() << "[pk_utils] Migration failed writing canonical file:" << canonical;
+        qWarning() << "Migration failed writing canonical file:" << canonical;
     }
     return ok;
 }

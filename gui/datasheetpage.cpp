@@ -282,7 +282,7 @@ void DatasheetPage::setPrimaryKeyColumn(int logicalCol) {
 void DatasheetPage::clearPrimaryKey() {
     if (!savePrimaryKeyNameForBase(basePath_, QString())) {
         QMessageBox::warning(this, tr("Primary Key"),
-                             tr("Could not remove primary key file."));
+                             tr("Could not save primary key file."));
         return;
     }
     model_->setPrimaryKeyName(QString());

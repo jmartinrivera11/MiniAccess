@@ -373,7 +373,7 @@ bool ReportQuickDialog::exportHtmlPdf(const QString& outFile,
     printer.setPageSize(QPageSize(QPageSize::A4));
     printer.setPageOrientation(QPageLayout::Landscape);
     printer.setPageMargins(QMarginsF(12, 12, 18, 12), QPageLayout::Millimeter);
-    if (!printer.isValid()) { whyNot = tr("Printer/PDF device initialization failed."); return false; }
+    if (!printer.isValid()) { whyNot = tr("PDF initialization failed."); return false; }
 
     QTextDocument doc;
     doc.setDefaultFont(QFont("Arial", 20));

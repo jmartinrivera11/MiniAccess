@@ -122,6 +122,9 @@ private:
     bool tableIsOpen(const QString& table) const { return isTableOpen_ ? isTableOpen_(table) : false; }
     void rebindPointersForTable(const QString& table);
 
+    bool ensureJunctionTable(const QString& lt, const QString& rt,
+                             QString& junctionOut, QString& fkLeftOut, QString& fkRightOut);
+
 private:
     QGraphicsScene* scene_{nullptr};
     CanvasView*     view_{nullptr};

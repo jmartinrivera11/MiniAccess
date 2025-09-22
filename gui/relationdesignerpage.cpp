@@ -207,21 +207,13 @@ static inline QString basePathForTableName(const QString& projectDir, const QStr
 }
 
 static QString normBase(const QString& s) {
-    QString out;
-    out.reserve(s.size());
-    for (QChar c : s) {
-        if (c.isLetterOrNumber()) out.append(c.toLower());
-    }
+    QString out; out.reserve(s.size());
+    for (QChar c : s) if (c.isLetterOrNumber()) out.append(c.toLower());
     return out;
 }
-
 static QString stripEdgeId(QString n) {
-    if (n.startsWith("id") && n.size() > 2) {
-        n = n.mid(2);
-    }
-    if (n.endsWith("id") && n.size() > 2) {
-        n.chop(2);
-    }
+    if (n.startsWith("id", Qt::CaseInsensitive) && n.size() > 2) n = n.mid(2);
+    if (n.endsWith("id",   Qt::CaseInsensitive) && n.size() > 2) n.chop(2);
     return n;
 }
 
@@ -230,13 +222,25 @@ static bool namesEqualOrSimilar(const QString& a, const QString& b) {
     const QString nb = normBase(b);
     if (na == nb) return true;
 
-    const QString sa = stripEdgeId(na);
-    const QString sb = stripEdgeId(nb);
-    if (sa == nb) return true;
-    if (na == sb) return true;
-    if (sa == sb) return true;
+    auto endsOK = [](const QString& big, const QString& small){
+        return big.endsWith(small);
+    };
 
+    if (na.size() > nb.size() && endsOK(na, nb)) return true;
+    if (nb.size() > na.size() && endsOK(nb, na)) return true;
+
+    const QString sa = normBase(stripEdgeId(a));
+    const QString sb = normBase(stripEdgeId(b));
+    if (!sa.isEmpty() && !sb.isEmpty()) {
+        if (sa == sb) return true;
+        if (sa.size() > sb.size() && endsOK(sa, sb)) return true;
+        if (sb.size() > sa.size() && endsOK(sb, sa)) return true;
+    }
     return false;
+}
+
+static bool tableFilesExist(const QString& base) {
+    return QFileInfo::exists(base + ".meta") || QFileInfo::exists(base + ".mad");
 }
 
 RelationDesignerPage::RelationDesignerPage(const QString& projectDir, QWidget* parent)
@@ -296,7 +300,7 @@ void RelationDesignerPage::buildUi() {
     relBox->setMaximumHeight(40);
 
     cbRelType_ = new QComboBox(this);
-    cbRelType_->addItems(QStringList() << "1:1" << "1:N");
+    cbRelType_->addItems(QStringList() << "1:1" << "1:N" << "N:M");
     cbRelType_->setMinimumWidth(70);
     cbRelType_->setFont(safeUiFontRegular());
 
@@ -502,7 +506,7 @@ bool RelationDesignerPage::canFormRelation(const QString& type,
         return false;
     }
 
-    if (findRelationIndex(lt, lf, rt, rf, type) >= 0) {
+    if (type != "N:M" && findRelationIndex(lt, lf, rt, rf, type) >= 0) {
         whyNot = tr("Esa relación ya existe.");
         return false;
     }
@@ -567,8 +571,15 @@ bool RelationDesignerPage::canFormRelation(const QString& type,
     }
 
     if (type == "N:M") {
-        whyNot = tr("N:M no se crea directamente. Usa una tabla intermedia y define dos relaciones 1:N.");
-        return false;
+        if (pkLeft.isEmpty() || pkRight.isEmpty()) {
+            whyNot = tr("N:M requiere PK en ambas tablas (faltante en %1 o %2).").arg(lt, rt);
+            return false;
+        }
+        if (!namesEqualOrSimilar(lf, pkLeft) || !namesEqualOrSimilar(rf, pkRight)) {
+            whyNot = tr("Para N:M, selecciona las PKs de ambas tablas (o nombres muy similares).");
+            return false;
+        }
+        return true;
     }
 
     whyNot = tr("Tipo de relación no soportado: %1").arg(type);
@@ -668,19 +679,19 @@ void RelationDesignerPage::onBtnCreateRelation() {
     const bool openA = tableIsOpen(a->table());
     const bool openB = tableIsOpen(b->table());
     if (openA || openB) {
-        QString msg = tr("No se puede modificar relaciones mientras haya tablas abiertas.\nAbiertas: ");
-        if (openA) msg += a->table();
-        if (openA && openB) msg += ", ";
-        if (openB) msg += b->table();
-        QMessageBox::warning(this, tr("Relaciones"), msg);
+        QString msg = tr("No se puede modificar relaciones mientras haya tablas abiertas.\n"
+                         "Abiertas: ");
+        if (openA) msg += a->table() + " ";
+        if (openB) msg += b->table() + " ";
+        QMessageBox::warning(this, tr("Relaciones"), msg.trimmed());
         return;
     }
 
-    const QString type = cbRelType_ ? cbRelType_->currentText() : QStringLiteral("1:N");
+    QString type = cbRelType_->currentText();
 
     FieldItem *left = a, *right = b;
     if ((a->isPk() && !b->isPk()) || (!a->isPk() && b->isPk())) {
-        if (a->isPk()) { left = b; right = a; } else { left = a; right = b; }
+        if (a->isPk()) { left=b; right=a; } else { left=a; right=b; }
     }
 
     QString why;
@@ -689,11 +700,58 @@ void RelationDesignerPage::onBtnCreateRelation() {
         return;
     }
 
-    QString whyData;
-    if (!validarDatosExistentes(left->table(), left->name(),
-                                right->table(), right->name(),
-                                type, whyData)) {
-        QMessageBox::warning(this, tr("Relaciones"), whyData);
+    if (type == "N:M") {
+        QString junction, fkA, fkB;
+        if (!ensureJunctionTable(left->table(), right->table(), junction, fkA, fkB)) {
+            QMessageBox::critical(this, tr("Relaciones"),
+                                  tr("No se pudo crear la tabla intermedia (revisa PKs, colisiones de nombres o I/O)."));
+            return;
+        }
+
+        auto* boxA = boxes_.value(left->table(),  nullptr);
+        auto* boxB = boxes_.value(right->table(), nullptr);
+        QPointF pos = (boxA && boxB)
+                          ? (boxA->pos() + (boxB->pos()-boxA->pos())*0.5 + QPointF(60,20))
+                          : QPointF(100,100);
+        addTableBoxAt(junction, pos);
+
+        auto* boxJ = boxes_.value(junction, nullptr);
+        auto findItem = [](TableBox* box, const QString& name)->FieldItem*{
+            if (!box) return nullptr;
+            for (auto* f : box->fieldItems()) if (f->name()==name) return f;
+            return nullptr;
+        };
+
+        VisualRelation r1;
+        r1.leftTable  = junction;
+        r1.leftField  = fkA;
+        r1.rightTable = left->table();
+        r1.rightField = primaryKeyForTable(left->table());
+        r1.relType    = "1:N";
+        r1.enforceRI     = cbEnforce_->isChecked();
+        r1.cascadeUpdate = cbCascadeUpd_->isChecked();
+        r1.cascadeDelete = cbCascadeDel_->isChecked();
+        r1.leftItem  = findItem(boxJ, r1.leftField);
+        r1.rightItem = findItem(boxA, r1.rightField);
+
+        VisualRelation r2;
+        r2.leftTable  = junction;
+        r2.leftField  = fkB;
+        r2.rightTable = right->table();
+        r2.rightField = primaryKeyForTable(right->table());
+        r2.relType    = "1:N";
+        r2.enforceRI     = cbEnforce_->isChecked();
+        r2.cascadeUpdate = cbCascadeUpd_->isChecked();
+        r2.cascadeDelete = cbCascadeDel_->isChecked();
+        r2.leftItem  = findItem(boxJ, r2.leftField);
+        r2.rightItem = findItem(boxB, r2.rightField);
+
+        drawRelation(r1); relations_.push_back(r1); addRelationToGrid(r1);
+        drawRelation(r2); relations_.push_back(r2); addRelationToGrid(r2);
+
+        clearFieldSelection();
+        emit relacionCreada();
+        emit relationsChanged();
         return;
     }
 
@@ -703,9 +761,9 @@ void RelationDesignerPage::onBtnCreateRelation() {
     vr.rightTable = right->table();
     vr.rightField = right->name();
     vr.relType    = type;
-    vr.enforceRI     = cbEnforce_ && cbEnforce_->isChecked();
-    vr.cascadeUpdate = cbCascadeUpd_ && cbCascadeUpd_->isChecked();
-    vr.cascadeDelete = cbCascadeDel_ && cbCascadeDel_->isChecked();
+    vr.enforceRI     = cbEnforce_->isChecked();
+    vr.cascadeUpdate = cbCascadeUpd_->isChecked();
+    vr.cascadeDelete = cbCascadeDel_->isChecked();
     vr.leftItem  = left;
     vr.rightItem = right;
 
@@ -720,6 +778,7 @@ void RelationDesignerPage::onBtnCreateRelation() {
 
     clearFieldSelection();
     emit relacionCreada();
+    emit relationsChanged();
 }
 
 void RelationDesignerPage::onBtnDeleteRelation() {
@@ -1303,4 +1362,98 @@ void RelationDesignerPage::refreshTableBox(const QString& table) {
             if (r.line) updateRelationGeometry(r);
         }
     }
+}
+
+bool RelationDesignerPage::ensureJunctionTable(const QString& lt, const QString& rt,
+                                               QString& junctionOut, QString& fkLeftOut, QString& fkRightOut)
+{
+    const QString pkL = primaryKeyForTable(lt);
+    const QString pkR = primaryKeyForTable(rt);
+    if (pkL.isEmpty() || pkR.isEmpty()) return false;
+
+    ma::Schema sL, sR;
+    try {
+        ma::Table tL; tL.open(basePathForTableName(projectDir_, lt).toStdString());
+        sL = tL.getSchema();
+        ma::Table tR; tR.open(basePathForTableName(projectDir_, rt).toStdString());
+        sR = tR.getSchema();
+    } catch (...) {
+        return false;
+    }
+
+    auto findField = [](const ma::Schema& s, const QString& qn)->std::optional<ma::Field>{
+        for (const auto& f : s.fields) {
+            if (QString::fromStdString(f.name).compare(qn, Qt::CaseInsensitive)==0) return f;
+        }
+        return std::nullopt;
+    };
+
+    const auto fL = findField(sL, pkL);
+    const auto fR = findField(sR, pkR);
+    if (!fL || !fR) return false;
+
+    auto basePathFor = [&](const QString& tbl){ return QDir(projectDir_).filePath(tbl); };
+    QString baseName = lt + "_" + rt + "_JN";
+    QString jn = baseName;
+    int suf = 2;
+    while (QFileInfo::exists(basePathFor(jn) + ".meta") ||
+           QFileInfo::exists(basePathFor(jn) + ".mad")) {
+        jn = baseName + QString::number(suf++);
+        if (suf > 999) return false;
+    }
+
+    QString fkA = pkL;
+    QString fkB = pkR;
+    if (fkA.compare(fkB, Qt::CaseInsensitive) == 0) {
+        fkB = rt + "_" + pkR;
+    }
+
+    ma::Schema js;
+    {
+        ma::Field a = *fL;
+        a.name = fkA.toStdString();
+        js.fields.push_back(a);
+    }
+    {
+        ma::Field b = *fR;
+        b.name = fkB.toStdString();
+        js.fields.push_back(b);
+    }
+    js.tableName = jn.toStdString();
+
+    try {
+        ma::Table tj;
+        tj.create(basePathFor(jn).toStdString(), js);
+        tj.close();
+    } catch (...) {
+        return false;
+    }
+
+    try {
+        ma::Table tIdx; tIdx.open(basePathFor(jn).toStdString());
+        auto createIndexFor = [&](int fieldIdx, const ma::Field& f, const QString& idxBaseName){
+            const auto t = f.type;
+            const std::string idxName = idxBaseName.toStdString();
+
+            if (t == ma::FieldType::Int32) {
+                tIdx.createInt32Index(fieldIdx, idxName);
+                return;
+            }
+            if (t == ma::FieldType::String || t == ma::FieldType::CharN) {
+                tIdx.createStringIndex(fieldIdx, idxName);
+                return;
+            }
+        };
+
+        createIndexFor(0, *fL, QString("idx_%1").arg(fkA));
+        createIndexFor(1, *fR, QString("idx_%1").arg(fkB));
+
+        tIdx.close();
+    } catch (...) {
+    }
+
+    junctionOut = jn;
+    fkLeftOut   = fkA;
+    fkRightOut  = fkB;
+    return true;
 }

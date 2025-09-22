@@ -5,33 +5,20 @@
 
 namespace gui {
 
-// === Palette: Evergreen (verde limpio con acentos esmeralda) ===
-static const char* BG_APP    = "#EEF5F2"; // fondo general con tinte menta muy suave
-static const char* BG_SURF   = "#FFFFFF"; // superficies (hoja/datasheet) se mantienen blancas
-
-// Ribbon (barra superior) en verde medio-oscuro, pensado para iconos/texto claros
-static const char* BG_RIB_L  = "#2D6A57"; // parte superior (ligeramente más clara)
-static const char* BG_RIB_D  = "#245646"; // parte inferior (ligeramente más oscura)
-
-// Panel izquierdo (navegación) en verde más profundo para separar bien del contenido
-static const char* BG_NAV    = "#1F463C"; // cuerpo del dock (oscuro)
-static const char* BG_NAV_L  = "#275A4D"; // cabecera/título del dock (un paso más claro)
-
-// Bordes / líneas de tabla con un verde grisáceo suave
+static const char* BG_APP    = "#EEF5F2";
+static const char* BG_SURF   = "#FFFFFF";
+static const char* BG_RIB_L  = "#2D6A57";
+static const char* BG_RIB_D  = "#245646";
+static const char* BG_NAV    = "#1F463C";
+static const char* BG_NAV_L  = "#275A4D";
 static const char* BORD      = "#B5D8CA";
-
-// Estados de hover/press en superficies claras (datasheet, listas, etc.)
-static const char* BG_HOV    = "#E2F1EA"; // hover: apenas más verdoso
-static const char* BG_PUSH   = "#D6E8E0"; // pressed: un paso más marcado
-
-// Tipografía
-static const char* TXT       = "#12221B"; // texto principal (casi negro con matiz verde)
-static const char* TXT_DIM   = "#4A6559"; // texto tenue/descriptivo
-static const char* TXT_INV   = "#FFFFFF"; // texto invertido (para ribbon/nav)
-
-// Acento primario en esmeralda (botones primarios, selección activa, etc.)
-static const char* ACCENT    = "#0F8F66"; // esmeralda elegante
-static const char* ACCENT_D  = "#0B6B4D"; // acento más oscuro (hover/active)
+static const char* BG_HOV    = "#E2F1EA";
+static const char* BG_PUSH   = "#D6E8E0";
+static const char* TXT       = "#12221B";
+static const char* TXT_DIM   = "#4A6559";
+static const char* TXT_INV   = "#FFFFFF";
+static const char* ACCENT    = "#0F8F66";
+static const char* ACCENT_D  = "#0B6B4D";
 
 static QString loadFallbackFont() {
     const QStringList candidates = {
