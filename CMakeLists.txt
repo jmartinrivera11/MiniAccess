@@ -55,6 +55,9 @@ if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
         core/metadata.h core/metadata.cpp
         gui/relationeditdialog.h gui/relationeditdialog.cpp
         gui/reportquickdialog.h gui/reportquickdialog.cpp
+        core/forms_io.h core/forms_io.cpp
+        gui/formrunnerpage.h gui/formrunnerpage.cpp
+        gui/formdesignerpage.h gui/formdesignerpage.cpp
 
 
 

@@ -32,6 +32,11 @@
 #include "reportquickdialog.h"
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QInputDialog>
+#include <QJsonDocument>
+#include "../core/forms_io.h"
+#include "formrunnerpage.h"
+#include "formdesignerpage.h"
 
 using namespace ma;
 
@@ -102,6 +107,11 @@ void MainWindow::setupUi() {
     QMenu* reportsMenu = menuBar()->addMenu("&Reports");
     QAction* actReportSimple = reportsMenu->addAction(QIcon(":/icons/icons/print.svg"), "Simple Report...");
 
+    QMenu* formsMenu = menuBar()->addMenu("&Forms");
+    QAction* actNewForm      = formsMenu->addAction(QIcon(":/icons/icons/form-new.svg"), "New Form from Table...");
+    QAction* actOpenFormRun  = formsMenu->addAction(QIcon(":/icons/icons/form-run.svg"), "Open Form (Run)...");
+    QAction* actOpenFormDesign = formsMenu->addAction(QIcon(":/icons/icons/form-design.svg"), "Open Form (Design)...");
+
     auto makeGroup = [&](const QString& text){
         QWidget* sep = new QWidget(this); sep->setFixedWidth(1); ribbon->addWidget(sep);
         auto* lab = new QLabel(text, this); lab->setObjectName("RibbonGroupLabel"); ribbon->addWidget(lab);
@@ -151,6 +161,10 @@ void MainWindow::setupUi() {
     connect(actInsert,       &QAction::triggered, this, &MainWindow::insertRecord);
     connect(actDelete,       &QAction::triggered, this, &MainWindow::deleteRecord);
     connect(actRefresh,      &QAction::triggered, this, &MainWindow::refreshView);
+
+    connect(actNewForm,        &QAction::triggered, this, &MainWindow::newFormFromTable);
+    connect(actOpenFormRun,    &QAction::triggered, this, &MainWindow::openFormRunner);
+    connect(actOpenFormDesign, &QAction::triggered, this, &MainWindow::openFormDesigner);
 
     setProjectPathAndReload(QString());
 }
@@ -680,3 +694,151 @@ void MainWindow::openReportSimple() {
     ReportQuickDialog dlg(currentProjectPath_, this);
     dlg.exec();
 }
+
+QStringList MainWindow::allTablesInProject(const QString& projDir) const {
+    if (projDir.isEmpty()) return {};
+    QDir d(projDir);
+    const QStringList metas = d.entryList(QStringList() << "*.meta", QDir::Files);
+    QStringList out;
+    out.reserve(metas.size());
+    for (const QString& m : metas) {
+        const QString base = m.left(m.size() - 5);
+        out << base;
+    }
+    std::sort(out.begin(), out.end(), [](const QString& a, const QString& b){
+        return a.localeAwareCompare(b) < 0;
+    });
+    return out;
+}
+
+QString MainWindow::chooseOne(const QString& title, const QString& label, const QStringList& options, const QString& def) {
+    bool ok=false;
+    QString sel = QInputDialog::getItem(this, title, label, options, options.indexOf(def), false, &ok);
+    return ok ? sel : QString();
+}
+
+QString MainWindow::askText(const QString& title, const QString& label, const QString& def) {
+    bool ok=false;
+    QString s = QInputDialog::getText(this, title, label, QLineEdit::Normal, def, &ok).trimmed();
+    return ok ? s : QString();
+}
+
+void MainWindow::newFormFromTable() {
+    if (currentProjectPath_.isEmpty()) {
+        QMessageBox::information(this, "Forms", "Open or create a Project first.");
+        return;
+    }
+    const QStringList tables = allTablesInProject(currentProjectPath_);
+    if (tables.isEmpty()) {
+        QMessageBox::information(this, "Forms", "No tables in the current project.");
+        return;
+    }
+
+    const QString tbl = chooseOne("New Form", "Base table for the form:", tables);
+    if (tbl.isEmpty()) return;
+
+    const QString defName = QString("Form_%1").arg(tbl);
+    QString formName = askText("New Form", "Form name:", defName);
+    if (formName.isEmpty()) return;
+
+    QJsonObject formDef = forms::makeAutoFormDef(formName, tbl, currentProjectPath_);
+    if (!forms::saveOrUpdateForm(currentProjectPath_, formDef)) {
+        QMessageBox::warning(this, "Forms", "Could not save the new form definition.");
+        return;
+    }
+
+    ensureFormDesignerTab(formName, formDef);
+}
+
+void MainWindow::openFormDesigner() {
+    if (currentProjectPath_.isEmpty()) {
+        QMessageBox::information(this, "Forms", "Open or create a Project first.");
+        return;
+    }
+    const QStringList forms = forms::listForms(currentProjectPath_);
+    if (forms.isEmpty()) {
+        QMessageBox::information(this, "Forms", "No forms found. Create one first.");
+        return;
+    }
+    const QString sel = chooseOne("Open Form (Design)", "Select form:", forms);
+    if (sel.isEmpty()) return;
+
+    QJsonObject def;
+    if (!forms::loadForm(currentProjectPath_, sel, def)) {
+        QMessageBox::warning(this, "Forms", "Could not load the selected form.");
+        return;
+    }
+    ensureFormDesignerTab(sel, def);
+}
+
+void MainWindow::openFormRunner() {
+    if (currentProjectPath_.isEmpty()) {
+        QMessageBox::information(this, "Forms", "Open or create a Project first.");
+        return;
+    }
+    const QStringList forms = forms::listForms(currentProjectPath_);
+    if (forms.isEmpty()) {
+        QMessageBox::information(this, "Forms", "No forms found. Create one first.");
+        return;
+    }
+    const QString sel = chooseOne("Open Form (Run)", "Select form:", forms);
+    if (sel.isEmpty()) return;
+
+    QJsonObject def;
+    if (!forms::loadForm(currentProjectPath_, sel, def)) {
+        QMessageBox::warning(this, "Forms", "Could not load the selected form.");
+        return;
+    }
+    ensureFormRunnerTab(sel, def);
+}
+
+void MainWindow::onFormRequestClose(QWidget* page) {
+    int idx = tabs_->indexOf(page);
+    if (idx >= 0) {
+        tabs_->removeTab(idx);
+        page->deleteLater();
+    }
+    auto removeFrom = [&](QHash<QString, QPointer<QWidget>>& map) {
+        QString k; for (auto it = map.begin(); it!=map.end(); ++it) { if (it.value()==page) { k = it.key(); break; } }
+        if (!k.isEmpty()) map.remove(k);
+    };
+    removeFrom(openFormRunners_);
+    removeFrom(openFormDesigners_);
+}
+
+int MainWindow::ensureFormRunnerTab(const QString& formName, const QJsonObject& formDef) {
+    if (openFormRunners_.contains(formName)) {
+        QWidget* w = openFormRunners_.value(formName);
+        if (w) {
+            int i = tabs_->indexOf(w);
+            if (i >= 0) { tabs_->setCurrentIndex(i); return i; }
+        }
+        openFormRunners_.remove(formName);
+    }
+    auto* page = new FormRunnerPage(currentProjectPath_, formDef, this);
+    connect(page, SIGNAL(requestClose(QWidget*)), this, SLOT(onFormRequestClose(QWidget*)));
+    const QString title = formName + " [Form]";
+    int idx = tabs_->addTab(page, QIcon(":/icons/icons/form-run.svg"), title);
+    tabs_->setCurrentIndex(idx);
+    openFormRunners_.insert(formName, page);
+    return idx;
+}
+
+int MainWindow::ensureFormDesignerTab(const QString& formName, const QJsonObject& formDef) {
+    if (openFormDesigners_.contains(formName)) {
+        QWidget* w = openFormDesigners_.value(formName);
+        if (w) {
+            int i = tabs_->indexOf(w);
+            if (i >= 0) { tabs_->setCurrentIndex(i); return i; }
+        }
+        openFormDesigners_.remove(formName);
+    }
+    auto* page = new FormDesignerPage(currentProjectPath_, formDef, this);
+    connect(page, SIGNAL(requestClose(QWidget*)), this, SLOT(onFormRequestClose(QWidget*)));
+    const QString title = formName + " [Form Design]";
+    int idx = tabs_->addTab(page, QIcon(":/icons/icons/form-design.svg"), title);
+    tabs_->setCurrentIndex(idx);
+    openFormDesigners_.insert(formName, page);
+    return idx;
+}
+

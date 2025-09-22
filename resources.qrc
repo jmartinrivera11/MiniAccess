@@ -23,5 +23,8 @@
         <file>icons/pk.svg</file>
         <file>icons/pk_black.svg</file>
         <file>icons/print.svg</file>
+        <file>icons/form-run.svg</file>
+        <file>icons/form-new.svg</file>
+        <file>icons/form-design.svg</file>
     </qresource>
 </RCC>
